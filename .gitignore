@@ -1,0 +1,17 @@
+# Rust
+/target
+Cargo.lock
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# ML Weights & Data
+*.safetensors
+*.bin
+*.pt
+*.ckpt
+
+# MacOS
+.DS_Store
