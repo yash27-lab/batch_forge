@@ -5,7 +5,7 @@ use memmap2::MmapOptions;
 use safetensors::SafeTensors;
 use thiserror::Error;
 
-use crate::tensor::{DataType, TensorView};
+use crate::tensor::{DataType, TensorError, TensorView};
 
 #[derive(Error, Debug)]
 pub enum LoaderError {
@@ -13,6 +13,8 @@ pub enum LoaderError {
     Io(#[from] std::io::Error),
     #[error("Safetensors error: {0}")]
     SafeTensors(#[from] safetensors::SafeTensorError),
+    #[error("Tensor error: {0}")]
+    Tensor(#[from] TensorError),
 }
 
 /// Loads a Safetensors file via memory mapping, returning zero-copy tensor views.
@@ -30,12 +32,14 @@ pub fn load_safetensors<'a>(path: &Path) -> Result<HashMap<String, TensorView<'s
 
     for name in st.names() {
         let view = st.tensor(name)?;
-        let dtype = DataType::from(view.dtype());
+        let dtype = DataType::try_from(view.dtype())?;
         let shape = view.shape().to_vec();
         let data = view.data();
 
-        tensors.insert(name.to_string(), TensorView::new(shape, dtype, data));
+        let tensor_view = TensorView::new(shape, dtype, data)?;
+        tensors.insert(name.to_string(), tensor_view);
     }
 
     Ok(tensors)
 }
+

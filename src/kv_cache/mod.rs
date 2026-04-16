@@ -11,10 +11,14 @@ pub struct KVCache {
 
 impl KVCache {
     pub fn new(device: &Device, max_len: usize, head_dim: usize) -> Self {
-        let buffer_size = (max_len * head_dim * std::mem::size_of::<f32>()) as u64;
-        let k_buffer = device.new_buffer(buffer_size, MTLResourceOptions::StorageModeShared);
-        let v_buffer = device.new_buffer(buffer_size, MTLResourceOptions::StorageModeShared);
-        
+        let buffer_size = max_len
+            .checked_mul(head_dim)
+            .and_then(|v| v.checked_mul(std::mem::size_of::<f32>()))
+            .expect("KV Cache buffer size overflowed");
+
+        let k_buffer = device.new_buffer(buffer_size as u64, MTLResourceOptions::StorageModeShared);
+        let v_buffer = device.new_buffer(buffer_size as u64, MTLResourceOptions::StorageModeShared);
+
         Self {
             k_buffer,
             v_buffer,
