@@ -48,10 +48,10 @@ impl RequestManager {
             let new_v_data = vec![0.2f32; (m * d) as usize];
             let q_data = req.input_data; // Assume input is Q for this test
             
-            let buf_new_k = backend.create_buffer(&new_k_data);
-            let buf_new_v = backend.create_buffer(&new_v_data);
-            let buf_q = backend.create_buffer(&q_data);
-            let buf_o = backend.create_buffer_uninitialized::<f32>((m * d) as usize);
+            let buf_new_k = backend.create_buffer(&new_k_data).expect("Buffer allocation failed");
+            let buf_new_v = backend.create_buffer(&new_v_data).expect("Buffer allocation failed");
+            let buf_q = backend.create_buffer(&q_data).expect("Buffer allocation failed");
+            let buf_o = backend.create_buffer_uninitialized::<f32>((m * d) as usize).expect("Buffer allocation failed");
 
             // 1. Update KV Cache
             backend.update_kv_cache(
@@ -62,7 +62,7 @@ impl RequestManager {
                 m as u32, 
                 kv_cache.current_len as u32, 
                 d as u32
-            );
+            ).expect("KV cache update failed");
             kv_cache.current_len += m;
 
             // 2. Perform KV Attention
@@ -74,7 +74,7 @@ impl RequestManager {
                 m as u32, 
                 kv_cache.current_len as u32, 
                 d as u32
-            );
+            ).expect("KV attention failed");
 
             let ptr = buf_o.contents() as *const f32;
             let mut o_data = vec![0.0f32; (m * d) as usize];

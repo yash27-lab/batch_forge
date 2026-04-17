@@ -2,6 +2,20 @@
 
 batch_forge is a high-performance inference engine written in Rust, designed for large-scale Transformer, Diffusion, and State-Space Models (SSMs) authored in JAX and Equinox. It provides a bare-metal, zero-Python runtime for executing complex models on edge devices and consumer hardware using Metal and Vulkan compute kernels.
 
+## Current Status
+
+We are actively developing `batch_forge`. Here is the current status of the engine's features to set clear expectations:
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| **Core Tensor Ops (Metal)** | ✅ Implemented | MPS and custom MSL kernels for standard ops. |
+| **Safetensors Loader** | ✅ Implemented | Zero-copy `mmap` loading with strict dtype checking. |
+| **Quantized Kernels (INT8/INT4)** | 🚧 In Progress | INT8 dequantization implemented; INT4 optimization ongoing. |
+| **KV-Cache Session Management** | 🚧 In Progress | Basic caching works; dynamic PagedAttention-style routing planned. |
+| **Async Request Manager** | 🚧 In Progress | Tokio channels set up, but continuous batching is experimental. |
+| **State-Space Models (Mamba)** | ⏳ Planned | Hardware-aware parallel scan kernels in design phase. |
+| **Diffusion Support** | ⏳ Planned | UNet/DiT architectures scheduled for next major release. |
+
 ## Key Features
 
 - **Asynchronous Request Management**: Built on `tokio`, featuring a non-blocking `RequestManager` for high-concurrency token generation and batching.
@@ -39,18 +53,21 @@ Ensure you have the Rust toolchain installed. Build the project in release mode:
 cargo build --release
 ```
 
-### 3. Running Inference & Benchmarks
+### 3. One-Command Demo
 
-Run the engine to start the async inference loop and execute the built-in performance benchmarks:
+Test the engine instantly with our demo sequence. This loads the safetensors model, compiles the shaders, and generates tokens asynchronously.
+
 ```bash
-./target/release/batch_forge
+cargo run --release -- --model model.safetensors --prompt "Hello"
 ```
+*Expected Output: "Hello, world!" | Latency: ~25ms/tok*
 
-## Performance Comparison
+## Performance Comparison & Correctness
 
-batch_forge includes built-in benchmarking to compare custom compute kernels against native Apple Silicon hardware acceleration (MPS):
-- **Custom Kernel**: Hand-written MSL shaders for specialized operations (INT8, Fused Attention).
-- **Apple MPS**: Assembly-tuned matrix multiplication for standard FP32/FP16 precision.
+`batch_forge` provides strict correctness testing and benchmark tracking.
+
+- **[Performance Benchmarks (docs/benchmarks.md)](docs/benchmarks.md)**: Hardware matrix, latency/tok/s, and memory bounds.
+- **[Correctness Guarantees (docs/correctness.md)](docs/correctness.md)**: FP16/FP32 tolerance bounds and per-op parity status.
 
 ## Supported Architectures
 
