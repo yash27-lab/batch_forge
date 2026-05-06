@@ -51,3 +51,17 @@ cargo run --release --bin generate -- --backend metal --prompt "Once upon a time
 ```
 
 See [platform troubleshooting](troubleshooting.md) for Metal requirements.
+
+## Redirect generated text
+
+Generation writes text to stdout and setup, backend, and timing information
+to stderr. Redirect them independently:
+
+```bash
+cargo run --release --bin generate -- --backend cpu --prompt "Hello" > answer.txt 2> run.log
+```
+
+The output stream ends with a newline. Characters that span multiple tokenizer
+tokens are emitted after their UTF-8 bytes are complete. Closing an output pipe
+early stops the token loop and treats a broken pipe as normal termination;
+other output errors report failure.
