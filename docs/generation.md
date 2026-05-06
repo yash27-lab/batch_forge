@@ -25,3 +25,15 @@ cargo run --release --bin generate -- --model-dir "/path/to/gpt2 assets" --backe
 Existing nonempty assets are skipped by the download script. Its `--force`
 option replaces them after a completed transfer; `--timeout SECONDS` sets the
 socket timeout. Failed transfers leave an existing final asset intact.
+
+## Inspect options without downloading a model
+
+```bash
+cargo run --bin generate -- --help
+cargo run --bin generate -- --version
+```
+
+Help and version return before loading model assets. Unknown arguments,
+missing values, invalid integers, and invalid temperatures return argument-error
+exit status 2. Asset and execution errors return failure. The default MLP
+binary has its own `--help`; its flags differ from the generator's flags.
