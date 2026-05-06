@@ -65,3 +65,16 @@ The output stream ends with a newline. Characters that span multiple tokenizer
 tokens are emitted after their UTF-8 bytes are complete. Closing an output pipe
 early stops the token loop and treats a broken pipe as normal termination;
 other output errors report failure.
+
+## Empty prompts and end-of-text
+
+An empty CLI prompt is seeded internally with GPT-2's end-of-text token. This
+provides the first input token required by the model without printing that seed.
+The loop stops when it samples end-of-text and does not print the marker.
+
+```bash
+cargo run --release --bin generate -- --backend cpu --prompt "" --max-new 20
+```
+
+`--max-new` must be a positive integer. Timing statistics count sampled tokens,
+including a sampled stop token, so the token count is not a character count.
