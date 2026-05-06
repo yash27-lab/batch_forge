@@ -91,3 +91,13 @@ cargo run --release --bin generate -- --backend cpu --greedy --temperature 0.8 -
 
 Greedy ties retain the earliest token ID. NaN, infinity, and negative CLI
 temperatures are rejected before asset loading.
+
+## Top-k candidate filtering
+
+`--top-k K` restricts sampling to the K largest logits. Zero disables this
+filter, and a value at least as large as the vocabulary retains all candidates.
+With positive temperature, `--top-k 1` leaves only the highest candidate.
+
+Equal-logit cutoff ties prefer smaller token IDs, including signed-zero ties.
+Retained candidates use a stable token-ID order when drawing from their
+probabilities. A greedy run uses argmax directly and ignores top-k filtering.
