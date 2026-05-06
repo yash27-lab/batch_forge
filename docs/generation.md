@@ -78,3 +78,16 @@ cargo run --release --bin generate -- --backend cpu --prompt "" --max-new 20
 
 `--max-new` must be a positive integer. Timing statistics count sampled tokens,
 including a sampled stop token, so the token count is not a character count.
+
+## Temperature and greedy decoding
+
+`--temperature 0` selects greedy argmax. A positive temperature enables
+sampling; the value must be finite and non-negative. `--greedy` forces zero
+temperature regardless of where the temperature flag appears:
+
+```bash
+cargo run --release --bin generate -- --backend cpu --greedy --temperature 0.8 --prompt "Hello"
+```
+
+Greedy ties retain the earliest token ID. NaN, infinity, and negative CLI
+temperatures are rejected before asset loading.
