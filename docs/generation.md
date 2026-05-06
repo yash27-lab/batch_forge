@@ -37,3 +37,17 @@ Help and version return before loading model assets. Unknown arguments,
 missing values, invalid integers, and invalid temperatures return argument-error
 exit status 2. Asset and execution errors return failure. The default MLP
 binary has its own `--help`; its flags differ from the generator's flags.
+
+## Select the compute backend
+
+`--backend cpu` selects the portable Rust reference. On macOS, the generator
+defaults to `metal`; elsewhere it defaults to `cpu`. An explicit Metal request
+fails on a non-macOS platform or when Metal initialization fails. It does not
+silently select a different backend.
+
+```bash
+cargo run --release --bin generate -- --backend cpu --prompt "Once upon a time"
+cargo run --release --bin generate -- --backend metal --prompt "Once upon a time"
+```
+
+See [platform troubleshooting](troubleshooting.md) for Metal requirements.
