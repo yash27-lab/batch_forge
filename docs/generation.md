@@ -115,3 +115,16 @@ model and tokenizer assets, prompt, sampling flags, and code revision. The same
 seed alone does not guarantee identical output across different assets,
 backends, or revisions: numerical logits and sampling implementation changes
 can affect the result.
+
+## Context limits and loading errors
+
+The default GPT-2 small configuration has a 1024-token context. Generation
+forwards the most recent 1024 tokens when a sequence grows beyond that limit,
+and uses positions within that forwarded slice. Each step recomputes its
+sequence; the loop does not use a KV cache.
+
+Loading rejects checkpoint shapes that differ from the configured model,
+structurally invalid tensors, and mismatched tokenizer vocabulary size. Keep
+weights and tokenizer files from the same model. For a report, include the
+failing command, error text, backend/platform, and asset source; see
+[troubleshooting](troubleshooting.md) and [correctness](correctness.md).
