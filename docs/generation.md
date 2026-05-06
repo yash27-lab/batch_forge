@@ -101,3 +101,17 @@ With positive temperature, `--top-k 1` leaves only the highest candidate.
 Equal-logit cutoff ties prefer smaller token IDs, including signed-zero ties.
 Retained candidates use a stable token-ID order when drawing from their
 probabilities. A greedy run uses argmax directly and ignores top-k filtering.
+
+## Reproduce a sampling run
+
+Choose a seed explicitly when comparing runs:
+
+```bash
+cargo run --release --bin generate -- --backend cpu --seed 42 --temperature 0.8 --top-k 40 --prompt "Hello"
+```
+
+The generation loop retains its RNG across tokens. Record the seed, backend,
+model and tokenizer assets, prompt, sampling flags, and code revision. The same
+seed alone does not guarantee identical output across different assets,
+backends, or revisions: numerical logits and sampling implementation changes
+can affect the result.
