@@ -8,3 +8,4 @@ Start with the [test command reference](test-matrix.md) to choose the smallest v
 - [Issue templates](../.github/ISSUE_TEMPLATE/) — structured bug reports and enhancement proposals.
 - [Test command reference](test-matrix.md) — formatting, compile, lint, and test commands for each task.
 - [Troubleshooting](troubleshooting.md) — platform, model-asset, and test setup notes.
+- [Generation guide](generation.md) — GPT-2 setup, command-line controls, output, and context behavior.
