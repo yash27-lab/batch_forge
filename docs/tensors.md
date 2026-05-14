@@ -73,3 +73,15 @@ Choose a tolerance appropriate to the operation and test. A matching numeric
 buffer is evidence about that comparison, not proof that a whole model or
 asset set has been verified. See [correctness](correctness.md) for the test
 boundaries used by this repository.
+
+## Borrowed views and portable F32 materialization
+
+`TensorView::new` checks shape, dtype, and byte-buffer size while borrowing the
+bytes. `to_tensor_f32()` copies F32 values by reading little-endian bytes and
+works with an unaligned source offset. It rejects a non-F32 dtype and
+revalidates public fields before conversion.
+
+`as_slice::<T>()` attempts a byte reinterpretation with alignment and length
+checks. It does not verify that `T` matches the semantic dtype or convert byte
+order. Callers must check those conditions themselves; use F32 materialization
+when a portable owned tensor is needed.

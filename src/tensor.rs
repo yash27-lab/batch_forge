@@ -90,7 +90,9 @@ impl<'data> TensorView<'data> {
         self.shape.iter().product()
     }
 
-    /// Safely casts the underlying byte buffer to a typed slice if the dtype matches.
+    /// Attempts to reinterpret bytes as a Pod slice, checking alignment and length.
+    /// This does not check semantic dtype or convert byte order. Use
+    /// [`TensorView::to_tensor_f32`] for portable, owned F32 materialization.
     pub fn as_slice<T: Pod>(&self) -> Option<&[T]> {
         bytemuck::try_cast_slice(self.data).ok()
     }
