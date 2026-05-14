@@ -57,3 +57,19 @@ tensor.validate()?;
 Validation checks structural consistency and shape overflow. It does not
 require every F32 value to be finite. MLP inference revalidates its public
 layer tensors and the supplied input before forwarding.
+
+## Interpret parity differences
+
+`max_abs_diff` returns the largest absolute difference for valid, equal-shaped
+buffers. It returns infinity for shape mismatch, invalid buffers, or a
+non-finite element difference; even two equally truncated tensors fail.
+
+```rust
+let difference = actual.max_abs_diff(&reference);
+let passes = difference.is_finite() && difference <= 1e-3;
+```
+
+Choose a tolerance appropriate to the operation and test. A matching numeric
+buffer is evidence about that comparison, not proof that a whole model or
+asset set has been verified. See [correctness](correctness.md) for the test
+boundaries used by this repository.
