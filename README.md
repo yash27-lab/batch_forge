@@ -118,6 +118,9 @@ cargo run --release --bin bench            # matmul/gelu/MLP numbers on your mac
 
 Both measured and reproducible — see [docs/benchmarks.md](docs/benchmarks.md) (real M2 numbers, tiled vs naive matmul) and [docs/correctness.md](docs/correctness.md) (per-op CPU↔Metal deviations + the GPT-2 end-to-end check). For common setup and platform questions, see the [troubleshooting guide](docs/troubleshooting.md); browse the [documentation index](docs/README.md) for the complete guide list. Contributors can start with [CONTRIBUTING.md](CONTRIBUTING.md).
 
+For hands-on use, read the [generation guide](docs/generation.md),
+[tensor API guide](docs/tensors.md), and [async engine guide](docs/engine.md).
+
 ## License
 
 MIT OR Apache-2.0

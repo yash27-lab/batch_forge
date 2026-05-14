@@ -68,3 +68,11 @@ The default MLP binary returns failure for missing checkpoints, invalid input
 buffers, failed inference requests, and failed numerical checks. A reference
 file selected with --verify must contain both input and output; a
 synthetic fallback is not used to claim verification.
+
+## Detailed usage references
+
+See the [generation guide](generation.md) for backend, sampling, output, and
+context-window behavior. The [tensor guide](tensors.md) explains shape and
+buffer errors; the [engine guide](engine.md) explains queue bounds and shutdown
+behavior. Use the [test command reference](test-matrix.md) to choose a local
+check for a reproduction.
