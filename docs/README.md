@@ -10,3 +10,4 @@ Start with the [test command reference](test-matrix.md) to choose the smallest v
 - [Troubleshooting](troubleshooting.md) — platform, model-asset, and test setup notes.
 - [Generation guide](generation.md) — GPT-2 setup, command-line controls, output, and context behavior.
 - [Tensor API guide](tensors.md) — Shapes, fallible allocation, validation, parity, and borrowed views.
+- [Async engine guide](engine.md) — Request submission, queue bounds, cancellation, shutdown, and errors.
