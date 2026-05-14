@@ -29,3 +29,18 @@ The manager runs one forward pass at a time. The forward call is synchronous
 inside its Tokio task, so CPU work occupies a runtime worker during inference.
 Async channels do not fuse requests into a batch or make the numerical work
 itself asynchronous.
+
+## Cancellation, shutdown, and errors
+
+If a response receiver is dropped while its request is queued, the manager
+skips that request before computing. A forward pass that has already started
+is not interrupted by this queue check.
+
+Dropping all submitter handles closes the queue. The manager drains available
+requests and exits after receiving channel closure. `infer` returns
+`ModelError::EngineClosed` when sending or receiving can no longer complete;
+model-validation errors are returned through the same result channel.
+
+The submitter does not retry automatically. A caller should distinguish an
+invalid input from a closed engine before deciding whether another attempt is
+appropriate.
