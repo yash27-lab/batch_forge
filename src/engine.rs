@@ -2,7 +2,8 @@
 //!
 //! A `tokio` task owns the model and backend and serves inference requests off
 //! an `mpsc` queue, replying on a per-request `oneshot` channel. This is the
-//! non-blocking request/response architecture; true continuous batching (fusing
+//! asynchronous request/response queue; forward computation is synchronous
+//! inside the manager task. True continuous batching (fusing
 //! queued requests into one dispatch) is future work — see the README roadmap.
 //!
 //! The engine is backend-agnostic (`Arc<dyn Backend>`), so it runs on the CPU

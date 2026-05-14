@@ -17,3 +17,15 @@ async fn infer_once(model: Arc<Mlp>, input: Tensor) -> Result<Tensor, ModelError
 
 The input is owned by the submitted request. The request ID is used for
 tracing; it is not a deduplication key or a guarantee of result persistence.
+
+## Queue capacity and execution
+
+`queue_depth` sets the bounded channel capacity; zero is normalized to one
+slot. When the queue is full, sending waits for room. This bounds queued
+requests, but not the number of caller futures retaining inputs while waiting
+to submit.
+
+The manager runs one forward pass at a time. The forward call is synchronous
+inside its Tokio task, so CPU work occupies a runtime worker during inference.
+Async channels do not fuse requests into a batch or make the numerical work
+itself asynchronous.
