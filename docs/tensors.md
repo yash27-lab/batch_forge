@@ -42,3 +42,18 @@ An overflowing element count returns `TensorError::BufferOverflow`. A failed
 buffer reservation returns `TensorError::AllocationFailed`. The convenience
 `zeros` constructor panics on those failures. The fallible API handles errors
 reported by buffer reservation; it is not a process-wide memory limit.
+
+## Validate after changing public fields
+
+`shape` and `data` are public. If a caller edits either after construction,
+call `tensor.validate()` before using that structure:
+
+```rust
+let mut tensor = Tensor::new(vec![1.0, 2.0], vec![2])?;
+tensor.shape = vec![1, 2];
+tensor.validate()?;
+```
+
+Validation checks structural consistency and shape overflow. It does not
+require every F32 value to be finite. MLP inference revalidates its public
+layer tensors and the supplied input before forwarding.
