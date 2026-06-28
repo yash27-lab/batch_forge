@@ -199,6 +199,8 @@ or export your own Equinox model:\n    python python/export_eqx.py --out model.s
     }
 
     // --- Metal forward + cross-backend check ---
+    // `mut` is only used on macOS, where the Metal result replaces the CPU one.
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut production = cpu_out.clone();
     #[cfg(target_os = "macos")]
     if args.backend != BackendChoice::Cpu {
