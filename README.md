@@ -1,84 +1,116 @@
 # batch_forge
 
-batch_forge is a high-performance inference engine written in Rust, designed for large-scale Transformer, Diffusion, and State-Space Models (SSMs) authored in JAX and Equinox. It provides a bare-metal, zero-Python runtime for executing complex models on edge devices and consumer hardware using Metal and Vulkan compute kernels.
+A small, **correctness-first** inference runtime for Apple Silicon, written in Rust.
 
-## Current Status
+batch_forge loads models exported from JAX/Equinox (via [safetensors](https://github.com/huggingface/safetensors)) and runs them with custom **Metal** compute kernels. Every GPU kernel has a pure-Rust CPU reference, and the two are checked against each other by automated parity tests — so the numbers it produces are verifiable, not asserted.
 
-We are actively developing `batch_forge`. Here is the current status of the engine's features to set clear expectations:
+> **Scope, honestly.** This is a focused engine, not a drop-in replacement for [MLX](https://github.com/ml-explore/mlx), [llama.cpp](https://github.com/ggerganov/llama.cpp), or [candle](https://github.com/huggingface/candle). What it does today — a verified op library, a Metal backend with CPU parity, a zero-copy loader, an async request engine, and an end-to-end MLP that matches its JAX/NumPy reference to ~1e-6 — it does end-to-end and tests rigorously. Transformer LM generation, quantized model pipelines, and SSM/diffusion support are on the roadmap, marked clearly below.
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| **Core Tensor Ops (Metal)** | ✅ Implemented | MPS and custom MSL kernels for standard ops. |
-| **Safetensors Loader** | ✅ Implemented | Zero-copy `mmap` loading with strict dtype checking. |
-| **Quantized Kernels (INT8/INT4)** | 🚧 In Progress | INT8 dequantization implemented; INT4 optimization ongoing. |
-| **KV-Cache Session Management** | 🚧 In Progress | Basic caching works; dynamic PagedAttention-style routing planned. |
-| **Async Request Manager** | 🚧 In Progress | Tokio channels set up, but continuous batching is experimental. |
-| **State-Space Models (Mamba)** | ⏳ Planned | Hardware-aware parallel scan kernels in design phase. |
-| **Diffusion Support** | ⏳ Planned | UNet/DiT architectures scheduled for next major release. |
+[![CI](https://github.com/yash27-lab/batch_forge/actions/workflows/ci.yml/badge.svg)](https://github.com/yash27-lab/batch_forge/actions/workflows/ci.yml)
 
-## Key Features
+## What works today
 
-- **Asynchronous Request Management**: Built on `tokio`, featuring a non-blocking `RequestManager` for high-concurrency token generation and batching.
-- **KV-Cache System**: Session-based Key-Value cache management in Metal's unified memory for efficient autoregressive generation without redundant re-computation.
-- **Hybrid Metal Backend**: Combines Apple's highly optimized **Metal Performance Shaders (MPS)** for standard precision operations with custom **MSL (Metal Shading Language)** kernels for specialized tasks.
-- **JAX/Equinox Integration**: Direct zero-copy loading of Equinox PyTrees via Safetensors, bypassing heavyweight XLA or TFLite runtimes.
-- **Quantized Inference**: On-the-fly INT8 and INT4 dequantization kernels to minimize memory bandwidth and footprint on edge devices.
+| Component | Status | Verified by |
+|-----------|--------|-------------|
+| CPU reference ops (matmul, linear, attention, layernorm, rmsnorm, rope, gelu, int8 dequant) | ✅ | `cargo test --lib` |
+| Metal kernels for all of the above + KV-cache update | ✅ | `cargo test --test parity` (CPU↔Metal parity on-device) |
+| Zero-copy `mmap` safetensors loader | ✅ | unit + e2e |
+| Single-head attention with KV-cache + causal masking | ✅ | parity + cached-path integration test |
+| INT8 weight-only matmul kernel | ✅ | parity vs dequantize+matmul reference |
+| End-to-end MLP forward (CPU **and** Metal), verified vs JAX/NumPy | ✅ | `--verify` (matches reference to ~1e-6) |
+| Async request engine (`tokio` mpsc + oneshot, backend-agnostic) | ✅ | runnable via `--requests N` |
+| Reproducible microbenchmarks | ✅ | `cargo run --bin bench` |
+
+## Roadmap (not yet implemented)
+
+These were over-claimed in earlier versions of this README and are now tracked honestly:
+
+- ⏳ **Transformer LM generation** — tokenizer, multi-head attention, full model wiring (the building blocks exist; the end-to-end LM does not).
+- ⏳ **Quantized model pipeline** — the INT8 kernel is done and tested; loading/serving a fully quantized checkpoint is not. INT4 is not implemented.
+- ⏳ **Continuous batching** — the async engine does request/response now; fusing queued requests into one dispatch is future work.
+- ⏳ **State-Space Models (Mamba), Diffusion (UNet/DiT), Vulkan/WebGPU backends** — design stage only.
 
 ## Architecture
 
-The engine is built on four core pillars:
-1. **Async Runner**: A `tokio`-based server architecture that manages concurrent inference requests via mpsc channels and oneshot responses.
-2. **Stateful Session Storage**: Persistent KV-cache buffers pre-allocated per request ID to support large-scale language generation.
-3. **Zero-Copy Loader**: Uses memory-mapped I/O (`mmap`) to load weights instantly from Safetensors files without additional memory overhead.
-4. **Optimized Dispatch**: Dynamically branches between Apple MPS for standard matmuls and custom hand-written kernels for fused attention and quantized states.
+```
+          safetensors (mmap, zero-copy)
+                     │
+            ┌────────▼─────────┐
+            │   loader::SafeModel
+            └────────┬─────────┘
+                     │  Tensor (owned f32)
+        ┌────────────▼─────────────┐
+        │      model::Mlp           │  generic over Backend
+        └───────┬───────────┬──────┘
+                │           │
+     ┌──────────▼──┐   ┌────▼───────────────┐
+     │ CpuBackend  │   │ MetalBackend (MSL) │
+     │ (reference) │   │  custom kernels    │
+     └──────┬──────┘   └─────────┬──────────┘
+            └──── parity tests ──┘   (CPU is ground truth for GPU)
 
-## Getting Started
-
-### 1. Exporting Models from JAX/Equinox
-
-Install the required Python utilities:
-```bash
-pip install jax equinox safetensors numpy
+   engine::RequestManager  ──  tokio mpsc/oneshot, Arc<dyn Backend>
 ```
 
-Export your Equinox model (PyTree) to the Safetensors format:
-```bash
-python python/export_eqx.py --out model.safetensors
-```
+The design choice that everything else hangs off: **a CPU reference defines correct numerics, and the Metal kernels are validated against it.** This is how ggml/candle stay trustworthy, and it's what lets a reviewer believe the GPU path without owning the hardware.
 
-### 2. Building the Rust Engine
+- `src/ops.rs` — portable, dependency-free reference implementations (the spec).
+- `src/metal_backend.rs` + `src/shaders/compute.metal` — the accelerated kernels.
+- `src/model.rs` — the `Backend` trait and the `Mlp` model, generic over backend.
+- `src/loader.rs` — sound, owning `mmap` loader (no `transmute`/leak).
+- `src/engine.rs` — async request/response inference engine.
+- `tests/parity.rs` — randomized CPU↔Metal equivalence tests.
 
-Ensure you have the Rust toolchain installed. Build the project in release mode:
+## Quickstart
+
 ```bash
+# 1. Build (Apple Silicon for the Metal path; CPU path builds anywhere)
 cargo build --release
+
+# 2. Run the test suite (unit tests everywhere; parity tests on macOS)
+cargo test                       # CPU unit tests
+cargo test --test parity -- --nocapture   # CPU↔Metal parity (Apple Silicon)
+
+# 3. Generate a demo model + reference  (NumPy only — no JAX needed)
+python python/make_demo_model.py
+
+# 4. Run the engine: forward on CPU + Metal, cross-check, verify vs reference
+cargo run --release --bin batch_forge -- --verify reference.safetensors
+
+# 5. Benchmark on your machine
+cargo run --release --bin bench
 ```
 
-### 3. One-Command Demo
+Example output from step 4 (Apple M2):
 
-Test the engine instantly with our demo sequence. This loads the safetensors model, compiles the shaders, and generates tokens asynchronously.
+```
+loaded MLP: 3 layers, in=256, out=256
+[cpu]   output: shape [1, 256], ‖·‖₂=6.2420, head=[+0.3035, -0.3338, …]
+[metal] output: shape [1, 256], ‖·‖₂=6.2420, head=[+0.3035, -0.3338, …]
+[check] CPU vs Metal max|Δ| = 7.749e-7
+[verify] PASS — max|Δ| vs reference = 1.311e-6 (tol 1e-3)
+```
+
+### Exporting your own Equinox model
 
 ```bash
-cargo run --release -- --model model.safetensors --prompt "Hello"
+pip install -r python/requirements.txt          # jax, equinox, safetensors, numpy
+python python/export_eqx.py --out model.safetensors --ref reference.safetensors
+cargo run --release --bin batch_forge -- --verify reference.safetensors
 ```
-*Expected Output: "Hello, world!" | Latency: ~25ms/tok*
 
-## Performance Comparison & Correctness
+The exporter names weights `layers.{i}.weight` / `layers.{i}.bias` and writes a sample `input`/`output` pair the Rust engine checks itself against.
 
-`batch_forge` provides strict correctness testing and benchmark tracking.
+## Performance & correctness
 
-- **[Performance Benchmarks (docs/benchmarks.md)](docs/benchmarks.md)**: Hardware matrix, latency/tok/s, and memory bounds.
-- **[Correctness Guarantees (docs/correctness.md)](docs/correctness.md)**: FP16/FP32 tolerance bounds and per-op parity status.
+Both are measured, reproducible, and documented — no hard-coded results:
 
-## Supported Architectures
-
-- **Transformers**: Autoregressive LLMs with KV-Cache support.
-- **Vision Language Models (VLMs)**: High-throughput vision feature extraction.
-- **State-Space Models (SSMs)**: Selective scan operations (e.g., Mamba).
-- **Diffusion**: Fast UNet/DiT inference for image generation.
+- **[docs/benchmarks.md](docs/benchmarks.md)** — real CPU-vs-Metal numbers from `cargo run --bin bench`, with methodology and known limitations (the kernels are intentionally naive — there is large, honest headroom).
+- **[docs/correctness.md](docs/correctness.md)** — the parity-testing methodology and the actual observed CPU↔Metal deviations per operator.
 
 ## Contributing
 
-Contributions focusing on new compute kernels, quantization techniques (FP8/NF4), or additional hardware backends (Vulkan/WebGPU) are welcome. Please ensure all new kernels include numerical parity tests against JAX references.
+The highest-value next steps are tiled/`simdgroup_matrix` matmul, a real tokenizer + multi-head attention to reach transformer generation, and a quantized checkpoint loader. Any new kernel **must** ship with a CPU reference in `ops.rs` and a parity test in `tests/parity.rs`.
 
 ## License
 
