@@ -48,9 +48,24 @@ the (looser) thresholds the tests assert against.
 | Attention, full (m=4,s=12,d=32) | 1e-3 | 8.9e-8 | |
 | Attention, causal (q_offset=3) | 1e-3 | 1.2e-7 | masking + softmax |
 | INT8 quant matmul (24×48×32) | 1e-3 | 7.6e-6 | vs dequantize+matmul |
+| Tiled matmul (40×72×56) | 1e-3 | 1.9e-6 | shared-memory GEMM |
+| Multi-head attention (s=7,h=3,d=8) | 1e-3 | 1.2e-7 | causal, GPT-2 layout |
+| GELU at scale (5×3072, ±12) | 1e-2 | 4.8e-7 | regression test for the tanh-overflow fix |
 | Cached attention (e2e) | 1e-3 | 6.0e-8 | `update_kv_cache` → `kv_attention` |
 | KV-cache write | exact | 0 | bitwise copy check |
 | **MLP forward vs reference** | 1e-3 | **1.3e-6** | full model, CPU & Metal |
+| **GPT-2 logits, CPU vs Metal** | 1e-2 | **9.2e-5** | full 12-layer forward |
+| **GPT-2 top-5 vs HuggingFace** | exact | match | `tests/gpt2_e2e.rs` |
+
+### The GELU / tanh-overflow bug
+
+A worked example of why the CPU reference matters. GPT-2 activations drove the
+GELU tanh argument past ~70. Metal's fast-math `tanh` evaluates `exp(2·arg)`,
+which overflows f32 to `inf` and yields `NaN`; Rust's CPU `tanh` saturates. Every
+op passed parity at small magnitudes, so the bug only surfaced in the composed
+forward as all-`NaN` logits. A magnitude-scaled GELU parity test localized it
+immediately, and the fix (clamping the tanh argument, exact since tanh saturates
+by |arg|=15) is now a permanent regression test (the "GELU at scale" row above).
 
 Deviations are dominated by FP32 summation-order differences between the
 sequential CPU loop and the parallel GPU kernel — i.e. the kernels are doing the

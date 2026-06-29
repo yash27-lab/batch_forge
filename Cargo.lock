@@ -19,6 +19,7 @@ dependencies = [
  "memmap2",
  "metal",
  "safetensors",
+ "serde_json",
  "thiserror",
  "tokio",
  "tracing",

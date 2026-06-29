@@ -215,3 +215,67 @@ fn cached_attention_matches_reference() {
     let cpu = ops::attention(&q, &k_full, &v_full, 1, seq, d, false, 0);
     check("cached_attention", &cpu, &gpu, 1e-3);
 }
+
+#[test]
+fn matmul_tiled_parity() {
+    let (m, k, n) = (40, 72, 56); // deliberately non-multiples of the 16 tile
+    let mut rng = Rng::new(11);
+    let a = vecf(&mut rng, m * k);
+    let b = vecf(&mut rng, k * n);
+    let cpu = ops::matmul(&a, &b, m, k, n);
+    let gpu = backend().matmul_tiled(&a, &b, m, k, n);
+    check("matmul_tiled", &cpu, &gpu, 1e-3);
+}
+
+#[test]
+fn gelu_scaled_parity() {
+    let be = backend();
+    let mut rng = Rng::new(123);
+    // GPT-2 MLP hidden size (5 x 3072) with realistic magnitudes.
+    let x: Vec<f32> = (0..5 * 3072).map(|_| rng.f32() * 12.0).collect();
+    let cpu: Vec<f32> = x.iter().map(|&v| ops::gelu(v)).collect();
+    let gpu = be.gelu(&x);
+    let nan = gpu.iter().filter(|v| !v.is_finite()).count();
+    eprintln!("[parity] gelu_scaled nan count = {nan}");
+    check("gelu_scaled", &cpu, &gpu, 1e-2);
+}
+
+#[test]
+fn gpt2_sizes_parity() {
+    let be = backend();
+    let mut rng = Rng::new(99);
+    // c_attn-shaped matmul
+    let a = vecf(&mut rng, 5 * 768);
+    let b = vecf(&mut rng, 768 * 2304);
+    let cpu = ops::matmul(&a, &b, 5, 768, 2304);
+    let gpu = be.matmul_tiled(&a, &b, 5, 768, 2304);
+    check("mm 5x768x2304", &cpu, &gpu, 3e-3);
+    // GPT-2 MHA shape
+    let hd = 12 * 64;
+    let q = vecf(&mut rng, 5 * hd);
+    let k = vecf(&mut rng, 5 * hd);
+    let v = vecf(&mut rng, 5 * hd);
+    let cpu = ops::mha(&q, &k, &v, 5, 12, 64);
+    let gpu = be.mha(&q, &k, &v, 5, 12, 64);
+    check("mha 5x12x64", &cpu, &gpu, 2e-3);
+    // tied LM head shape
+    let x = vecf(&mut rng, 768);
+    let w = vecf(&mut rng, 50257 * 768);
+    let bz = vec![0.0f32; 50257];
+    let cpu = ops::linear(&x, &w, &bz, 1, 768, 50257);
+    let gpu = be.linear(&x, &w, &bz, 1, 768, 50257);
+    check("linear lm_head", &cpu, &gpu, 4e-3);
+}
+
+#[test]
+fn mha_parity() {
+    let (seq, heads, head_dim) = (7, 3, 8);
+    let hd = heads * head_dim;
+    let mut rng = Rng::new(12);
+    let q = vecf(&mut rng, seq * hd);
+    let k = vecf(&mut rng, seq * hd);
+    let v = vecf(&mut rng, seq * hd);
+    let cpu = ops::mha(&q, &k, &v, seq, heads, head_dim);
+    let gpu = backend().mha(&q, &k, &v, seq, heads, head_dim);
+    check("mha", &cpu, &gpu, 1e-3);
+}

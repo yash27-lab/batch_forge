@@ -1,116 +1,105 @@
 # batch_forge
 
-A small, **correctness-first** inference runtime for Apple Silicon, written in Rust.
+A from-scratch **GPT-2 inference engine** for Apple Silicon, written in Rust with hand-written **Metal** compute kernels.
 
-batch_forge loads models exported from JAX/Equinox (via [safetensors](https://github.com/huggingface/safetensors)) and runs them with custom **Metal** compute kernels. Every GPU kernel has a pure-Rust CPU reference, and the two are checked against each other by automated parity tests — so the numbers it produces are verifiable, not asserted.
-
-> **Scope, honestly.** This is a focused engine, not a drop-in replacement for [MLX](https://github.com/ml-explore/mlx), [llama.cpp](https://github.com/ggerganov/llama.cpp), or [candle](https://github.com/huggingface/candle). What it does today — a verified op library, a Metal backend with CPU parity, a zero-copy loader, an async request engine, and an end-to-end MLP that matches its JAX/NumPy reference to ~1e-6 — it does end-to-end and tests rigorously. Transformer LM generation, quantized model pipelines, and SSM/diffusion support are on the roadmap, marked clearly below.
+No PyTorch, no Python runtime, no `tokenizers` library. batch_forge loads real HuggingFace `gpt2` weights, tokenizes with its own byte-level BPE, runs the transformer on custom Metal kernels, and generates text — and **every GPU kernel is checked against a pure-Rust CPU reference**, so its output is verifiable, not asserted.
 
 [![CI](https://github.com/yash27-lab/batch_forge/actions/workflows/ci.yml/badge.svg)](https://github.com/yash27-lab/batch_forge/actions/workflows/ci.yml)
+
+```
+$ cargo run --release --bin generate -- --prompt "The meaning of life is" --greedy
+
+The meaning of life is not the same as the meaning of death.
+
+[25 tokens in 3.06s = 8.2 tok/s on metal]
+```
+
+```
+$ cargo run --release --bin generate -- \
+      --prompt "In a shocking turn of events, scientists discovered" --temperature 0.7
+
+In a shocking turn of events, scientists discovered that when they were forced to
+eat a "clean meal" each morning, they found that they were nearly three times more
+likely to lose weight.
+```
+
+That text is produced by a 124M-parameter GPT-2 running on the Metal backend. The next-token predictions are **bit-for-bit rank-identical to HuggingFace `transformers`**, verified by [`tests/gpt2_e2e.rs`](tests/gpt2_e2e.rs) and the NumPy reference in [`python/gpt2_reference.py`](python/gpt2_reference.py) — CPU and Metal logits agree to **9e-5**.
+
+## Why this is more than a toy
+
+The hard part of an inference engine isn't the architecture — it's being *correct*. batch_forge keeps a pure-Rust CPU implementation of every operator as the ground truth, and validates each Metal kernel against it on randomized inputs ([`tests/parity.rs`](tests/parity.rs)). That discipline caught a real bug during development:
+
+> GPT-2's GELU drove the tanh argument past ~70. Metal's fast-math `tanh` evaluates `exp(2·arg)`, which **overflows f32 to inf → NaN**, while Rust's CPU `tanh` saturates correctly. Every individual kernel passed parity at small magnitudes; only the composed forward produced `NaN`. The CPU reference + a magnitude-scaled parity test pinned it to GELU in minutes. Fix: clamp the tanh argument (it's saturated to ±1 by |arg|=15 anyway). That regression test now lives in the suite.
+
+That is the whole point of the design: a reviewer can trust the GPU path without owning a Mac, because the tests prove CPU≡Metal.
 
 ## What works today
 
 | Component | Status | Verified by |
 |-----------|--------|-------------|
-| CPU reference ops (matmul, linear, attention, layernorm, rmsnorm, rope, gelu, int8 dequant) | ✅ | `cargo test --lib` |
-| Metal kernels for all of the above + KV-cache update | ✅ | `cargo test --test parity` (CPU↔Metal parity on-device) |
-| Zero-copy `mmap` safetensors loader | ✅ | unit + e2e |
-| Single-head attention with KV-cache + causal masking | ✅ | parity + cached-path integration test |
-| INT8 weight-only matmul kernel | ✅ | parity vs dequantize+matmul reference |
-| End-to-end MLP forward (CPU **and** Metal), verified vs JAX/NumPy | ✅ | `--verify` (matches reference to ~1e-6) |
-| Async request engine (`tokio` mpsc + oneshot, backend-agnostic) | ✅ | runnable via `--requests N` |
-| Reproducible microbenchmarks | ✅ | `cargo run --bin bench` |
+| **GPT-2 (124M) text generation, CPU + Metal** | ✅ | `tests/gpt2_e2e.rs` (rank-identical to HF) |
+| From-scratch byte-level **BPE tokenizer** | ✅ | `encode("Hello world") == [15496, 995]`, round-trips |
+| **Metal kernels**: tiled matmul, multi-head attention, layernorm, rmsnorm, rope, gelu, int8 dequant | ✅ | `cargo test --test parity` (CPU↔Metal on-device) |
+| Pure-Rust CPU reference for every op | ✅ | `cargo test --lib` |
+| **Tiled matmul** (threadgroup shared memory) | ✅ | 1.8× over naive @ 512, 296 GF/s @ 1024 |
+| Zero-copy `mmap` safetensors loader (unaligned-safe) | ✅ | unit + e2e |
+| Sampling: greedy, temperature, top-k | ✅ | demo |
+| Async request engine (`tokio` mpsc/oneshot) | ✅ | `--requests N` on the MLP path |
 
-## Roadmap (not yet implemented)
+## Roadmap (not yet built — stated honestly)
 
-These were over-claimed in earlier versions of this README and are now tracked honestly:
+- ⏳ **KV cache for generation.** Today each step recomputes the full sequence (`O(n²)` over the context). The cache kernels exist (`update_kv_cache`, `kv_attention`); wiring them into the GPT-2 loop is next and is the biggest generation speedup available.
+- ⏳ **Resident weights.** The ergonomic op API re-uploads weights to the GPU each call; pooling/persisting them is a large, easy win.
+- ⏳ **FP16/BF16 compute**, **larger GPT-2 / Llama**, **INT4**, **flash-attention-style fused kernel**, **Vulkan/WebGPU**.
 
-- ⏳ **Transformer LM generation** — tokenizer, multi-head attention, full model wiring (the building blocks exist; the end-to-end LM does not).
-- ⏳ **Quantized model pipeline** — the INT8 kernel is done and tested; loading/serving a fully quantized checkpoint is not. INT4 is not implemented.
-- ⏳ **Continuous batching** — the async engine does request/response now; fusing queued requests into one dispatch is future work.
-- ⏳ **State-Space Models (Mamba), Diffusion (UNet/DiT), Vulkan/WebGPU backends** — design stage only.
+This is not competing with [MLX](https://github.com/ml-explore/mlx) / [llama.cpp](https://github.com/ggerganov/llama.cpp) / [candle](https://github.com/huggingface/candle). It's a correctness-first engine that runs a real LLM end-to-end and proves it.
 
 ## Architecture
 
 ```
-          safetensors (mmap, zero-copy)
-                     │
-            ┌────────▼─────────┐
-            │   loader::SafeModel
-            └────────┬─────────┘
-                     │  Tensor (owned f32)
-        ┌────────────▼─────────────┐
-        │      model::Mlp           │  generic over Backend
-        └───────┬───────────┬──────┘
-                │           │
-     ┌──────────▼──┐   ┌────▼───────────────┐
-     │ CpuBackend  │   │ MetalBackend (MSL) │
-     │ (reference) │   │  custom kernels    │
-     └──────┬──────┘   └─────────┬──────────┘
-            └──── parity tests ──┘   (CPU is ground truth for GPU)
-
-   engine::RequestManager  ──  tokio mpsc/oneshot, Arc<dyn Backend>
+   prompt ──► BPE tokenizer (from scratch) ──► token ids
+                                                  │
+   gpt2 safetensors ──► mmap loader ──► Gpt2 ◄────┘
+                                         │  forward<B: LlmOps>
+                          ┌──────────────┴───────────────┐
+                          ▼                               ▼
+                    CpuBackend (ops.rs)          MetalBackend (compute.metal)
+                    the ground truth      ◄─ parity ─►  tiled matmul · MHA ·
+                                                         layernorm · gelu · …
 ```
 
-The design choice that everything else hangs off: **a CPU reference defines correct numerics, and the Metal kernels are validated against it.** This is how ggml/candle stay trustworthy, and it's what lets a reviewer believe the GPU path without owning the hardware.
-
-- `src/ops.rs` — portable, dependency-free reference implementations (the spec).
-- `src/metal_backend.rs` + `src/shaders/compute.metal` — the accelerated kernels.
-- `src/model.rs` — the `Backend` trait and the `Mlp` model, generic over backend.
-- `src/loader.rs` — sound, owning `mmap` loader (no `transmute`/leak).
-- `src/engine.rs` — async request/response inference engine.
-- `tests/parity.rs` — randomized CPU↔Metal equivalence tests.
+- `src/gpt2.rs` — model, the `LlmOps` backend trait, forward pass, sampling.
+- `src/tokenizer.rs` — byte-level BPE (`bytes_to_unicode`, merges, pre-tokenizer).
+- `src/ops.rs` — pure-Rust reference numerics (the spec).
+- `src/metal_backend.rs` + `src/shaders/compute.metal` — the Metal kernels.
+- `tests/parity.rs`, `tests/gpt2_e2e.rs` — CPU↔Metal + end-to-end verification.
 
 ## Quickstart
 
 ```bash
-# 1. Build (Apple Silicon for the Metal path; CPU path builds anywhere)
+# 1. Build (Apple Silicon for Metal; the CPU path builds anywhere)
 cargo build --release
 
-# 2. Run the test suite (unit tests everywhere; parity tests on macOS)
-cargo test                       # CPU unit tests
-cargo test --test parity -- --nocapture   # CPU↔Metal parity (Apple Silicon)
+# 2. Get GPT-2 weights + tokenizer (~550 MB, gitignored)
+python python/fetch_gpt2.py        # downloads into models/gpt2/
 
-# 3. Generate a demo model + reference  (NumPy only — no JAX needed)
-python python/make_demo_model.py
+# 3. Generate
+cargo run --release --bin generate -- --prompt "Once upon a time" --max-new 60
 
-# 4. Run the engine: forward on CPU + Metal, cross-check, verify vs reference
-cargo run --release --bin batch_forge -- --verify reference.safetensors
+# 4. Verify against the NumPy/HuggingFace reference
+python python/gpt2_reference.py            # prints HF predictions
+cargo test --test gpt2_e2e -- --nocapture  # asserts Rust matches
 
-# 5. Benchmark on your machine
-cargo run --release --bin bench
+# 5. Tests + benchmarks
+cargo test --test parity -- --nocapture    # CPU↔Metal parity (Apple Silicon)
+cargo run --release --bin bench            # matmul/gelu/MLP numbers on your machine
 ```
 
-Example output from step 4 (Apple M2):
-
-```
-loaded MLP: 3 layers, in=256, out=256
-[cpu]   output: shape [1, 256], ‖·‖₂=6.2420, head=[+0.3035, -0.3338, …]
-[metal] output: shape [1, 256], ‖·‖₂=6.2420, head=[+0.3035, -0.3338, …]
-[check] CPU vs Metal max|Δ| = 7.749e-7
-[verify] PASS — max|Δ| vs reference = 1.311e-6 (tol 1e-3)
-```
-
-### Exporting your own Equinox model
-
-```bash
-pip install -r python/requirements.txt          # jax, equinox, safetensors, numpy
-python python/export_eqx.py --out model.safetensors --ref reference.safetensors
-cargo run --release --bin batch_forge -- --verify reference.safetensors
-```
-
-The exporter names weights `layers.{i}.weight` / `layers.{i}.bias` and writes a sample `input`/`output` pair the Rust engine checks itself against.
+`generate` flags: `--prompt/-p`, `--max-new/-n`, `--temperature/-t`, `--top-k/-k`, `--seed/-s`, `--greedy`, `--backend cpu|metal`.
 
 ## Performance & correctness
 
-Both are measured, reproducible, and documented — no hard-coded results:
-
-- **[docs/benchmarks.md](docs/benchmarks.md)** — real CPU-vs-Metal numbers from `cargo run --bin bench`, with methodology and known limitations (the kernels are intentionally naive — there is large, honest headroom).
-- **[docs/correctness.md](docs/correctness.md)** — the parity-testing methodology and the actual observed CPU↔Metal deviations per operator.
-
-## Contributing
-
-The highest-value next steps are tiled/`simdgroup_matrix` matmul, a real tokenizer + multi-head attention to reach transformer generation, and a quantized checkpoint loader. Any new kernel **must** ship with a CPU reference in `ops.rs` and a parity test in `tests/parity.rs`.
+Both measured and reproducible — see [docs/benchmarks.md](docs/benchmarks.md) (real M2 numbers, tiled vs naive matmul) and [docs/correctness.md](docs/correctness.md) (per-op CPU↔Metal deviations + the GPT-2 end-to-end check).
 
 ## License
 

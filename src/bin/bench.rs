@@ -59,50 +59,50 @@ fn main() {
 
     let mut rng = Rng::new(0xBEEF);
 
-    // ---- matmul ----
-    println!("== matmul (square, f32) ==");
+    // ---- matmul: CPU vs naive Metal vs tiled Metal ----
+    println!("== matmul (square, f32): CPU vs naive Metal vs tiled Metal ==");
     println!(
-        "{:>6} | {:>12} {:>10} | {:>12} {:>10} | {:>8}",
-        "N", "cpu (ms)", "cpu GF/s", "metal (ms)", "metal GF/s", "speedup"
+        "{:>6} | {:>9} | {:>9} {:>8} | {:>9} {:>8} | {:>9}",
+        "N", "cpu GF/s", "naive ms", "GF/s", "tiled ms", "GF/s", "tiled/naive"
     );
-    for n in [128usize, 256, 512] {
+    for n in [128usize, 256, 512, 1024] {
         let a = rng.vec(n * n);
         let b = rng.vec(n * n);
-        let (cpu_iters, gpu_iters) = if n >= 512 { (2, 20) } else { (5, 50) };
+        let cpu_iters = if n >= 512 { 2 } else { 5 };
         let cpu = bench(1, cpu_iters, || {
             std::hint::black_box(ops::matmul(&a, &b, n, n, n));
         });
         #[cfg(target_os = "macos")]
-        let gpu = metal.as_ref().map(|m| {
-            bench(3, gpu_iters, || {
-                std::hint::black_box(m.matmul(&a, &b, n, n, n));
-            })
-        });
-        #[cfg(not(target_os = "macos"))]
-        let gpu: Option<Duration> = {
-            let _ = gpu_iters;
-            None
-        };
-
-        let cpu_ms = cpu.as_secs_f64() * 1e3;
-        match gpu {
-            Some(g) => {
-                let g_ms = g.as_secs_f64() * 1e3;
+        {
+            if let Some(m) = metal.as_ref() {
+                let gpu_iters = if n >= 512 { 15 } else { 50 };
+                let naive = bench(3, gpu_iters, || {
+                    std::hint::black_box(m.matmul(&a, &b, n, n, n));
+                });
+                let tiled = bench(3, gpu_iters, || {
+                    std::hint::black_box(m.matmul_tiled(&a, &b, n, n, n));
+                });
                 println!(
-                    "{n:>6} | {cpu_ms:>12.3} {:>10.1} | {g_ms:>12.3} {:>10.1} | {:>7.1}x",
+                    "{n:>6} | {:>9.1} | {:>9.3} {:>8.1} | {:>9.3} {:>8.1} | {:>8.1}x",
                     gflops(n, n, n, cpu),
-                    gflops(n, n, n, g),
-                    cpu.as_secs_f64() / g.as_secs_f64()
+                    naive.as_secs_f64() * 1e3,
+                    gflops(n, n, n, naive),
+                    tiled.as_secs_f64() * 1e3,
+                    gflops(n, n, n, tiled),
+                    naive.as_secs_f64() / tiled.as_secs_f64(),
                 );
+                continue;
             }
-            None => println!(
-                "{n:>6} | {cpu_ms:>12.3} {:>10.1} | {:>12} {:>10} | {:>8}",
-                gflops(n, n, n, cpu),
-                "-",
-                "-",
-                "-"
-            ),
         }
+        println!(
+            "{n:>6} | {:>9.1} | {:>9} {:>8} | {:>9} {:>8} | {:>9}",
+            gflops(n, n, n, cpu),
+            "-",
+            "-",
+            "-",
+            "-",
+            "-"
+        );
     }
 
     // ---- GELU ----

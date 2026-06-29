@@ -24,6 +24,7 @@ path = "src/bin/bench.rs"
 [dependencies]
 safetensors = "0.4"
 memmap2 = "0.9"
+serde_json = "1"
 bytemuck = { version = "1.14", features = ["derive"] }
 thiserror = "1.0"
 tracing = "0.1"

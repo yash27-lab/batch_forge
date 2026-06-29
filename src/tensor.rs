@@ -93,15 +93,24 @@ impl<'data> TensorView<'data> {
 
     /// Materializes an owned f32 [`Tensor`], copying out of the mapped buffer.
     ///
-    /// Currently only supports F32 source data; other dtypes return [`TensorError::NotF32`].
+    /// Reads little-endian f32 directly from the bytes, so it works even when the
+    /// tensor's offset in the mmap is not 4-byte aligned (which a zero-copy
+    /// `bytemuck` cast would reject). Only F32 source data is supported.
     pub fn to_tensor_f32(&self) -> Result<Tensor, TensorError> {
         if self.dtype != DataType::F32 {
             return Err(TensorError::NotF32(self.dtype));
         }
+        if self.data.len() % 4 != 0 {
+            return Err(TensorError::ShapeMismatch {
+                expected: self.numel() * 4,
+                found: self.data.len(),
+            });
+        }
         let data = self
-            .as_slice::<f32>()
-            .ok_or(TensorError::NotF32(self.dtype))?
-            .to_vec();
+            .data
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect();
         Ok(Tensor {
             data,
             shape: self.shape.clone(),

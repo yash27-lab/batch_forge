@@ -25,16 +25,34 @@ was captured on the reference device described next.
 
 ## Results (Apple M2)
 
-### Square matmul, FP32
+### GPT-2 (124M) text generation
 
-| N | CPU (ms) | CPU GFLOP/s | Metal (ms) | Metal GFLOP/s | Speedup |
-|------:|--------:|--------:|---------:|---------:|------:|
-| 128 | 0.171 | 24.6 | 0.324 | 12.9 | 0.5× |
-| 256 | 1.553 | 21.6 | 0.894 | 37.5 | 1.7× |
-| 512 | 11.172 | 24.0 | 2.483 | 108.1 | 4.5× |
+End-to-end autoregressive generation on the Metal backend, no KV cache yet
+(each step recomputes the full context):
 
-At N=128 the GPU is *slower* — dispatch + allocation overhead dominates a tiny
-problem. The crossover is around N=256, and the gap widens with size.
+| Backend | Throughput |
+|---------|-----------:|
+| Metal (M2) | ~8 tok/s |
+
+The dominant cost today is (a) recomputing the whole sequence each step and
+(b) re-uploading weights to the GPU per call. Both are on the roadmap; a KV cache
+alone removes the `O(n²)` blowup.
+
+### Square matmul, FP32 — naive vs tiled Metal
+
+The tiled kernel stages 16×16 tiles into threadgroup memory; the speedup over the
+naive one-thread-per-output kernel grows with size:
+
+| N | CPU GF/s | naive GF/s | tiled GF/s | tiled / naive |
+|------:|--------:|--------:|--------:|------:|
+| 128 | 33.4 | 15.0 | 16.1 | 1.1× |
+| 256 | 27.6 | 38.5 | 52.3 | 1.4× |
+| 512 | 26.2 | 113.6 | 202.4 | **1.8×** |
+| 1024 | 28.2 | 206.9 | 295.7 | 1.4× |
+
+At N=128 the GPU is *slower* than CPU — dispatch + allocation overhead dominates a
+tiny problem. Tiled matmul reaches ~296 GF/s at N=1024 (still well below the M2's
+FP32 peak; a `simdgroup_matrix` kernel is the next step).
 
 ### GELU (elementwise, 2²⁰ elements)
 

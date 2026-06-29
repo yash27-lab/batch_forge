@@ -38,6 +38,8 @@ pub struct MetalBackend {
     layernorm_pipeline: ComputePipelineState,
     rmsnorm_pipeline: ComputePipelineState,
     rope_pipeline: ComputePipelineState,
+    matmul_tiled_pipeline: ComputePipelineState,
+    mha_pipeline: ComputePipelineState,
 }
 
 impl MetalBackend {
@@ -70,6 +72,8 @@ impl MetalBackend {
             layernorm_pipeline: pso("layernorm")?,
             rmsnorm_pipeline: pso("rmsnorm")?,
             rope_pipeline: pso("rope")?,
+            matmul_tiled_pipeline: pso("matmul_tiled")?,
+            mha_pipeline: pso("mha")?,
             command_queue,
             library,
             device,
@@ -168,6 +172,75 @@ impl MetalBackend {
             m as u64,
         );
         self.read_buffer(&bc, m * n)
+    }
+
+    /// Shared-memory tiled matmul: `C[m,n] = A[m,k] * B[k,n]`. Same result as
+    /// [`MetalBackend::matmul`] but uses full 16x16 threadgroups with on-chip tiles.
+    pub fn matmul_tiled(&self, a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
+        const TILE: u64 = 16;
+        let ba = self.create_buffer(a).unwrap();
+        let bb = self.create_buffer(b).unwrap();
+        let bc = self.create_buffer_uninitialized::<f32>(m * n).unwrap();
+        let (bm, bn, bk) = self.dims3(m, n, k);
+        let cb = self.command_queue.new_command_buffer();
+        let enc = cb.new_compute_command_encoder();
+        enc.set_compute_pipeline_state(&self.matmul_tiled_pipeline);
+        enc.set_buffer(0, Some(&ba), 0);
+        enc.set_buffer(1, Some(&bb), 0);
+        enc.set_buffer(2, Some(&bc), 0);
+        enc.set_buffer(3, Some(&bm), 0);
+        enc.set_buffer(4, Some(&bn), 0);
+        enc.set_buffer(5, Some(&bk), 0);
+        // Full TILExTILE threadgroups so boundary threads still load zeros and
+        // participate in the barriers.
+        enc.dispatch_thread_groups(
+            MTLSize::new((n as u64).div_ceil(TILE), (m as u64).div_ceil(TILE), 1),
+            MTLSize::new(TILE, TILE, 1),
+        );
+        enc.end_encoding();
+        cb.commit();
+        cb.wait_until_completed();
+        self.read_buffer(&bc, m * n)
+    }
+
+    /// Multi-head causal self-attention. Q/K/V are `[seq, heads*head_dim]`.
+    pub fn mha(
+        &self,
+        q: &[f32],
+        k: &[f32],
+        v: &[f32],
+        seq: usize,
+        heads: usize,
+        head_dim: usize,
+    ) -> Vec<f32> {
+        let bq = self.create_buffer(q).unwrap();
+        let bk = self.create_buffer(k).unwrap();
+        let bv = self.create_buffer(v).unwrap();
+        let bo = self
+            .create_buffer_uninitialized::<f32>(seq * heads * head_dim)
+            .unwrap();
+        let (bs, bh, bd) = self.dims3(seq, heads, head_dim);
+        let cb = self.command_queue.new_command_buffer();
+        let enc = cb.new_compute_command_encoder();
+        enc.set_compute_pipeline_state(&self.mha_pipeline);
+        enc.set_buffer(0, Some(&bq), 0);
+        enc.set_buffer(1, Some(&bk), 0);
+        enc.set_buffer(2, Some(&bv), 0);
+        enc.set_buffer(3, Some(&bo), 0);
+        enc.set_buffer(4, Some(&bs), 0);
+        enc.set_buffer(5, Some(&bh), 0);
+        enc.set_buffer(6, Some(&bd), 0);
+        // One thread per (query, head); non-uniform dispatch handles the edges.
+        let th = heads.min(1024) as u64;
+        let tw = (1024 / th).min(seq as u64).max(1);
+        enc.dispatch_threads(
+            MTLSize::new(seq as u64, heads as u64, 1),
+            MTLSize::new(tw, th, 1),
+        );
+        enc.end_encoding();
+        cb.commit();
+        cb.wait_until_completed();
+        self.read_buffer(&bo, seq * heads * head_dim)
     }
 
     pub fn linear(

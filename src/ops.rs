@@ -197,6 +197,41 @@ pub fn attention(
     out
 }
 
+/// Multi-head causal self-attention. Q/K/V are `[seq, heads*head_dim]` with the
+/// heads laid out contiguously per row; output has the same shape. Query `i`
+/// attends causally over keys `j <= i`. This is the GPT-2 attention reference.
+pub fn mha(q: &[f32], k: &[f32], v: &[f32], seq: usize, heads: usize, head_dim: usize) -> Vec<f32> {
+    let hd = heads * head_dim;
+    assert_eq!(q.len(), seq * hd);
+    assert_eq!(k.len(), seq * hd);
+    assert_eq!(v.len(), seq * hd);
+    let scale = 1.0 / (head_dim as f32).sqrt();
+    let mut out = vec![0.0f32; seq * hd];
+    let mut scores = vec![0.0f32; seq];
+    for h in 0..heads {
+        let base = h * head_dim;
+        for qi in 0..seq {
+            let limit = qi + 1; // causal
+            for (kj, score) in scores.iter_mut().enumerate().take(limit) {
+                let mut dot = 0.0f32;
+                for d in 0..head_dim {
+                    dot += q[qi * hd + base + d] * k[kj * hd + base + d];
+                }
+                *score = dot * scale;
+            }
+            softmax_inplace(&mut scores[..limit]);
+            for d in 0..head_dim {
+                let mut acc = 0.0f32;
+                for (kj, &w) in scores[..limit].iter().enumerate() {
+                    acc += w * v[kj * hd + base + d];
+                }
+                out[qi * hd + base + d] = acc;
+            }
+        }
+    }
+    out
+}
+
 /// Dequantizes a per-row INT8 weight matrix: `out[r,c] = q[r,c] · scale[r]`.
 pub fn dequantize_int8(q: &[i8], scales: &[f32], rows: usize, cols: usize) -> Vec<f32> {
     assert_eq!(q.len(), rows * cols);
