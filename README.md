@@ -37,20 +37,20 @@ That is the whole point of the design: a reviewer can trust the GPU path without
 
 | Component | Status | Verified by |
 |-----------|--------|-------------|
-| **GPT-2 (124M) text generation, CPU + Metal** | ✅ | `tests/gpt2_e2e.rs` (rank-identical to HF) |
-| From-scratch byte-level **BPE tokenizer** | ✅ | `encode("Hello world") == [15496, 995]`, round-trips |
-| **Metal kernels**: tiled matmul, multi-head attention, layernorm, rmsnorm, rope, gelu, int8 dequant | ✅ | `cargo test --test parity` (CPU↔Metal on-device) |
-| Pure-Rust CPU reference for every op | ✅ | `cargo test --lib` |
-| **Tiled matmul** (threadgroup shared memory) | ✅ | 1.8× over naive @ 512, 296 GF/s @ 1024 |
-| Zero-copy `mmap` safetensors loader (unaligned-safe) | ✅ | unit + e2e |
-| Sampling: greedy, temperature, top-k | ✅ | demo |
-| Async request engine (`tokio` mpsc/oneshot) | ✅ | `--requests N` on the MLP path |
+| **GPT-2 (124M) text generation, CPU + Metal** | Done | `tests/gpt2_e2e.rs` (rank-identical to HF) |
+| From-scratch byte-level **BPE tokenizer** | Done | `encode("Hello world") == [15496, 995]`, round-trips |
+| **Metal kernels**: tiled matmul, multi-head attention, layernorm, rmsnorm, rope, gelu, int8 dequant | Done | `cargo test --test parity` (CPU↔Metal on-device) |
+| Pure-Rust CPU reference for every op | Done | `cargo test --lib` |
+| **Tiled matmul** (threadgroup shared memory) | Done | 1.8× over naive @ 512, 296 GF/s @ 1024 |
+| Zero-copy `mmap` safetensors loader (unaligned-safe) | Done | unit + e2e |
+| Sampling: greedy, temperature, top-k | Done | demo |
+| Async request engine (`tokio` mpsc/oneshot) | Done | `--requests N` on the MLP path |
 
 ## Roadmap (not yet built — stated honestly)
 
-- ⏳ **KV cache for generation.** Today each step recomputes the full sequence (`O(n²)` over the context). The cache kernels exist (`update_kv_cache`, `kv_attention`); wiring them into the GPT-2 loop is next and is the biggest generation speedup available.
-- ⏳ **Resident weights.** The ergonomic op API re-uploads weights to the GPU each call; pooling/persisting them is a large, easy win.
-- ⏳ **FP16/BF16 compute**, **larger GPT-2 / Llama**, **INT4**, **flash-attention-style fused kernel**, **Vulkan/WebGPU**.
+- **KV cache for generation.** Today each step recomputes the full sequence (`O(n²)` over the context). The cache kernels exist (`update_kv_cache`, `kv_attention`); wiring them into the GPT-2 loop is next and is the biggest generation speedup available.
+- **Resident weights.** The ergonomic op API re-uploads weights to the GPU each call; pooling/persisting them is a large, easy win.
+- **FP16/BF16 compute**, **larger GPT-2 / Llama**, **INT4**, **flash-attention-style fused kernel**, **Vulkan/WebGPU**.
 
 This is not competing with [MLX](https://github.com/ml-explore/mlx) / [llama.cpp](https://github.com/ggerganov/llama.cpp) / [candle](https://github.com/huggingface/candle). It's a correctness-first engine that runs a real LLM end-to-end and proves it.
 
