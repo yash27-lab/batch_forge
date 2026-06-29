@@ -2,8 +2,15 @@
 using namespace metal;
 
 // GELU (tanh approximation), matching ops::gelu / jax.nn.gelu(approximate=True).
+//
+// The tanh argument is clamped: Metal's fast-math `tanh` evaluates exp(2·arg),
+// which overflows to inf (→ NaN) once the argument is large (GPT-2 activations
+// can drive it past ~70). tanh has already saturated to ±1 by |arg|=15, so the
+// clamp is numerically exact in f32 while avoiding the overflow.
 inline float gelu_approx(float x) {
-    return 0.5f * x * (1.0f + tanh(0.7978845608f * (x + 0.044715f * x * x * x)));
+    float inner = 0.7978845608f * (x + 0.044715f * x * x * x);
+    inner = clamp(inner, -15.0f, 15.0f);
+    return 0.5f * x * (1.0f + tanh(inner));
 }
 
 // ---------------------------------------------------------------------------
@@ -248,5 +255,100 @@ kernel void rope(
         float x2 = X[r * D + i + half_d];
         X[r * D + i] = x1 * c - x2 * s;
         X[r * D + i + half_d] = x2 * c + x1 * s;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tiled matmul: C[M,N] = A[M,K] * B[K,N] using threadgroup shared memory.
+//
+// Each 16x16 threadgroup cooperatively stages tiles of A and B into fast
+// on-chip memory, so each global element is read once per tile instead of
+// once per output. This is the standard shared-memory GEMM and is many times
+// faster than the naive one-thread-per-output `matmul` above.
+// ---------------------------------------------------------------------------
+#define TILE 16
+kernel void matmul_tiled(
+    device const float* A [[buffer(0)]],
+    device const float* B [[buffer(1)]],
+    device float* C [[buffer(2)]],
+    constant uint& M [[buffer(3)]],
+    constant uint& N [[buffer(4)]],
+    constant uint& K [[buffer(5)]],
+    uint2 tid [[thread_position_in_threadgroup]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    threadgroup float As[TILE][TILE];
+    threadgroup float Bs[TILE][TILE];
+
+    uint row = gid.y;
+    uint col = gid.x;
+    float acc = 0.0f;
+
+    uint n_tiles = (K + TILE - 1) / TILE;
+    for (uint t = 0; t < n_tiles; ++t) {
+        uint a_col = t * TILE + tid.x;
+        uint b_row = t * TILE + tid.y;
+        As[tid.y][tid.x] = (row < M && a_col < K) ? A[row * K + a_col] : 0.0f;
+        Bs[tid.y][tid.x] = (b_row < K && col < N) ? B[b_row * N + col] : 0.0f;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        for (uint k = 0; k < TILE; ++k) {
+            acc += As[tid.y][k] * Bs[k][tid.x];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    if (row < M && col < N) {
+        C[row * N + col] = acc;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Multi-head causal self-attention.
+//
+// Q/K/V are [S, H*Dh] (heads laid out contiguously per row). One thread handles
+// one (head, query) pair, attending causally over keys j <= query. Output is
+// [S, H*Dh]. This is what powers the GPT-2 attention blocks.
+// ---------------------------------------------------------------------------
+kernel void mha(
+    device const float* Q [[buffer(0)]],
+    device const float* K [[buffer(1)]],
+    device const float* V [[buffer(2)]],
+    device float* O [[buffer(3)]],
+    constant uint& S [[buffer(4)]],   // sequence length
+    constant uint& H [[buffer(5)]],   // number of heads
+    constant uint& Dh [[buffer(6)]],  // head dimension
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint qpos = gid.x;
+    uint head = gid.y;
+    if (qpos >= S || head >= H) return;
+
+    uint HD = H * Dh;
+    uint base = head * Dh;
+    float scale = rsqrt((float)Dh);
+
+    // Pass 1: max logit over visible keys (causal: k <= qpos).
+    float max_s = -INFINITY;
+    for (uint k = 0; k <= qpos; ++k) {
+        float s = 0.0f;
+        for (uint d = 0; d < Dh; ++d) s += Q[qpos * HD + base + d] * K[k * HD + base + d];
+        s *= scale;
+        max_s = max(max_s, s);
+    }
+    // Pass 2: softmax denominator.
+    float sum = 0.0f;
+    for (uint k = 0; k <= qpos; ++k) {
+        float s = 0.0f;
+        for (uint d = 0; d < Dh; ++d) s += Q[qpos * HD + base + d] * K[k * HD + base + d];
+        sum += exp(s * scale - max_s);
+    }
+    // Pass 3: weighted sum of V.
+    for (uint d = 0; d < Dh; ++d) O[qpos * HD + base + d] = 0.0f;
+    for (uint k = 0; k <= qpos; ++k) {
+        float s = 0.0f;
+        for (uint d = 0; d < Dh; ++d) s += Q[qpos * HD + base + d] * K[k * HD + base + d];
+        float w = exp(s * scale - max_s) / sum;
+        for (uint d = 0; d < Dh; ++d) O[qpos * HD + base + d] += w * V[k * HD + base + d];
     }
 }

@@ -7,10 +7,12 @@
 //! keep a CPU reference next to each accelerated kernel.
 
 pub mod engine;
+pub mod gpt2;
 pub mod loader;
 pub mod model;
 pub mod ops;
 pub mod tensor;
+pub mod tokenizer;
 
 #[cfg(target_os = "macos")]
 pub mod kv_cache;
