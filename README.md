@@ -76,6 +76,11 @@ This is not competing with [MLX](https://github.com/ml-explore/mlx) / [llama.cpp
 
 ## Quickstart
 
+### Requirements
+
+- Rust 1.75 or later
+- Apple Silicon and macOS for the Metal backend. The CPU backend builds on other platforms.
+
 ```bash
 # 1. Build (Apple Silicon for Metal; the CPU path builds anywhere)
 cargo build --release
