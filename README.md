@@ -104,7 +104,7 @@ cargo run --release --bin bench            # matmul/gelu/MLP numbers on your mac
 
 ## Performance & correctness
 
-Both measured and reproducible — see [docs/benchmarks.md](docs/benchmarks.md) (real M2 numbers, tiled vs naive matmul) and [docs/correctness.md](docs/correctness.md) (per-op CPU↔Metal deviations + the GPT-2 end-to-end check). For common setup and platform questions, see the [troubleshooting guide](docs/troubleshooting.md).
+Both measured and reproducible — see [docs/benchmarks.md](docs/benchmarks.md) (real M2 numbers, tiled vs naive matmul) and [docs/correctness.md](docs/correctness.md) (per-op CPU↔Metal deviations + the GPT-2 end-to-end check). For common setup and platform questions, see the [troubleshooting guide](docs/troubleshooting.md); browse the [documentation index](docs/README.md) for the complete guide list.
 
 ## License
 
