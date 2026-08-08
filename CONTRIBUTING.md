@@ -1,0 +1,10 @@
+# Contributing
+
+Small, focused changes are easiest to review. Before opening a pull request, run the checks that match the code you changed:
+
+```bash
+cargo fmt --check
+cargo test --lib
+```
+
+Metal parity checks require Apple Silicon macOS, and the end-to-end GPT-2 check requires the downloaded model assets. See the [test command reference](docs/test-matrix.md) for the complete matrix and [troubleshooting guide](docs/troubleshooting.md) for setup notes.
