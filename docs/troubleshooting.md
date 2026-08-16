@@ -25,3 +25,12 @@ The files are placed under `models/gpt2/` and require roughly 550 MB of disk spa
 ```bash
 cargo test --lib
 ```
+
+## `cargo fmt` is unavailable
+
+Install Rust's formatting component for the active toolchain, then rerun the formatting check:
+
+```bash
+rustup component add rustfmt
+cargo fmt --check
+```
