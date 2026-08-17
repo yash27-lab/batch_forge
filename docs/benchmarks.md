@@ -23,6 +23,8 @@ was captured on the reference device described next.
 - CPU is the same naive reference used for correctness (single-threaded, no SIMD
   intrinsics, simple loop-order blocking only).
 
+The numbers below are a reference point, not a cross-device ranking; Apple GPU performance varies with chip generation, OS version, and thermal conditions.
+
 ## Results (Apple M2)
 
 ### GPT-2 (124M) text generation
