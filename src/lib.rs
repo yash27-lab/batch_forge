@@ -4,7 +4,9 @@
 //! ground-truth numerics for every operator, and a Metal backend
 //! (`metal_backend`) whose kernels are validated against that reference by the
 //! parity tests in `tests/`. This mirrors how production engines (ggml, candle)
-//! keep a CPU reference next to each accelerated kernel.
+//! keep a CPU reference next to each accelerated kernel. On non-macOS targets,
+//! the portable CPU modules remain available while the Metal-specific modules
+//! are omitted.
 
 pub mod engine;
 pub mod gpt2;
