@@ -14,6 +14,7 @@ pub mod loader;
 pub mod model;
 pub mod ops;
 pub mod tensor;
+/// From-scratch byte-level BPE tokenization for GPT-2-compatible vocabularies.
 pub mod tokenizer;
 
 #[cfg(target_os = "macos")]
