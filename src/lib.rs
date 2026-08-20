@@ -12,6 +12,7 @@ pub mod engine;
 pub mod gpt2;
 pub mod loader;
 pub mod model;
+/// Pure-Rust reference implementations used to verify accelerated kernels.
 pub mod ops;
 pub mod tensor;
 /// From-scratch byte-level BPE tokenization for GPT-2-compatible vocabularies.
