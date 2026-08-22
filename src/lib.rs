@@ -15,6 +15,7 @@ pub mod loader;
 pub mod model;
 /// Pure-Rust reference implementations used to verify accelerated kernels.
 pub mod ops;
+/// Lightweight tensor types and dtype conversions shared by the backends.
 pub mod tensor;
 /// From-scratch byte-level BPE tokenization for GPT-2-compatible vocabularies.
 pub mod tokenizer;
