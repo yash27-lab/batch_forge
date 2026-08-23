@@ -12,6 +12,7 @@ pub mod engine;
 pub mod gpt2;
 /// Zero-copy SafeTensors loading backed by memory mapping.
 pub mod loader;
+/// Model definitions and backend abstractions used to run them.
 pub mod model;
 /// Pure-Rust reference implementations used to verify accelerated kernels.
 pub mod ops;
