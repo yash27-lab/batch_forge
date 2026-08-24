@@ -9,6 +9,7 @@
 //! are omitted.
 
 pub mod engine;
+/// From-scratch GPT-2 inference shared by the CPU and Metal backends.
 pub mod gpt2;
 /// Zero-copy SafeTensors loading backed by memory mapping.
 pub mod loader;
