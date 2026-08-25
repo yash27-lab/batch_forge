@@ -8,6 +8,7 @@
 //! the portable CPU modules remain available while the Metal-specific modules
 //! are omitted.
 
+/// Asynchronous request/response inference engine built on Tokio channels.
 pub mod engine;
 /// From-scratch GPT-2 inference shared by the CPU and Metal backends.
 pub mod gpt2;
