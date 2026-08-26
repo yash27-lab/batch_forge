@@ -26,6 +26,7 @@ pub mod tokenizer;
 #[cfg(target_os = "macos")]
 pub mod kv_cache;
 
+/// Metal compute backend, available when building on macOS.
 #[cfg(target_os = "macos")]
 pub mod metal_backend;
 
