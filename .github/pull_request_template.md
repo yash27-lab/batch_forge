@@ -2,6 +2,10 @@
 
 Describe the change and why it is needed.
 
+## Documentation
+
+- [ ] Public API docs and user-facing guides updated when applicable
+
 ## Validation
 
 - [ ] `cargo fmt --check`
