@@ -5,8 +5,8 @@ that trust with a concrete, runnable method rather than a promise:
 
 > **The pure-Rust CPU implementation in `src/ops.rs` is the ground truth. Every
 > Metal kernel is tested against it on randomized inputs.** When the GPU and the
-> reference agree to within tolerance, the kernel is correct by construction of
-> the test.
+> reference agree to within tolerance, the kernel meets the test's numerical
+> contract.
 
 This is the same discipline ggml and candle use, and it means a reviewer can
 believe the Metal path without owning a Mac — the test either passes in CI-visible
