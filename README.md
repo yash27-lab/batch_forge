@@ -85,22 +85,21 @@ This is not competing with [MLX](https://github.com/ml-explore/mlx) / [llama.cpp
 # 1. Build (Apple Silicon for Metal; the CPU path builds anywhere)
 cargo build --release
 
-# 2. Get GPT-2 weights + tokenizer (~550 MB, gitignored)
-python python/fetch_gpt2.py        # downloads into models/gpt2/
+# 2. Create a deterministic demo MLP checkpoint + reference
+python python/make_demo_model.py
 
-# 3. Generate
-cargo run --release --bin generate -- --prompt "Once upon a time" --max-new 60
+# 3. Run the portable CPU reference
+cargo run --release -- --model model.safetensors --backend cpu
 
-# 4. Verify against the NumPy/HuggingFace reference
-python python/gpt2_reference.py            # prints HF predictions
-cargo test --test gpt2_e2e -- --nocapture  # asserts Rust matches
+# 4. Verify the model output against the generated reference
+cargo run --release -- --model model.safetensors --verify reference.safetensors
 
 # 5. Tests + benchmarks
 cargo test --test parity -- --nocapture    # CPU↔Metal parity (Apple Silicon)
 cargo run --release --bin bench            # matmul/gelu/MLP numbers on your machine
 ```
 
-`generate` flags: `--prompt/-p`, `--max-new/-n`, `--temperature/-t`, `--top-k/-k`, `--seed/-s`, `--greedy`, `--backend cpu|metal`.
+`batch_forge` flags: `--model/-m`, `--verify/-v`, `--requests/-r`, `--backend cpu|metal|both`.
 
 ## Performance & correctness
 
