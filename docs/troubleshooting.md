@@ -2,10 +2,11 @@
 
 ## Metal backend is unavailable
 
-The Metal backend requires macOS on Apple Silicon. On other platforms, or when checking a CPU-only build, run generation with:
+The Metal backend requires macOS on Apple Silicon. On other platforms, run the portable CPU reference with a demo checkpoint:
 
 ```bash
-cargo run --release --bin generate -- --backend cpu --prompt "Once upon a time"
+python python/make_demo_model.py
+cargo run --release -- --backend cpu
 ```
 
 ## GPT-2 assets are missing
