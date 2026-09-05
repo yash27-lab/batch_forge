@@ -4,6 +4,7 @@ Small, focused changes are easiest to review. Before opening a pull request, run
 
 ```bash
 cargo fmt --check
+cargo check
 cargo test --lib
 ```
 
