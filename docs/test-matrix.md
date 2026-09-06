@@ -6,6 +6,7 @@ Use the smallest relevant check while iterating:
 | --- | --- | --- |
 | Check formatting without changing files | `cargo fmt --check` | Any supported Rust platform with `rustfmt` |
 | Check for compile errors quickly | `cargo check` | Any supported Rust platform |
+| Run lints across binaries and tests | `cargo clippy --all-targets` | Any supported Rust platform with `clippy` |
 | Validate CPU reference operations | `cargo test --lib` | Any supported Rust platform |
 | Check Metal-to-CPU kernel parity | `cargo test --test parity -- --nocapture` | Apple Silicon macOS |
 | Check end-to-end GPT-2 predictions | `cargo test --test gpt2_e2e -- --nocapture` | Requires downloaded GPT-2 assets |
