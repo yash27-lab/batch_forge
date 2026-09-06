@@ -35,3 +35,12 @@ Install Rust's formatting component for the active toolchain, then rerun the for
 rustup component add rustfmt
 cargo fmt --check
 ```
+
+## `cargo clippy` is unavailable
+
+Install the Clippy component for the active toolchain, then rerun the lint check:
+
+```bash
+rustup component add clippy
+cargo clippy --all-targets
+```
