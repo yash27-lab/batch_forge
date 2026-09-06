@@ -20,4 +20,8 @@ Provide the smallest command or code sample that reproduces the issue.
 
 ## Expected behavior
 
-Describe the expected result and include relevant output or logs.
+Describe the expected result.
+
+## Relevant logs
+
+Include the smallest relevant error output, backtrace, or parity diff.
