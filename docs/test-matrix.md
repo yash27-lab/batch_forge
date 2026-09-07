@@ -11,7 +11,7 @@ Use the smallest relevant check while iterating:
 | Check Metal-to-CPU kernel parity | `cargo test --test parity -- --nocapture` | Apple Silicon macOS |
 | Check end-to-end GPT-2 predictions | `cargo test --test gpt2_e2e -- --nocapture` | Requires downloaded GPT-2 assets |
 
-Run these commands from the repository root. For a lightweight CPU-only preflight, run `cargo fmt --check` followed by `cargo test --lib`.
+Run these commands from the repository root. For a lightweight CPU-only preflight, run `cargo fmt --check`, `cargo check`, and `cargo test --lib`; add `cargo clippy --all-targets` when the Clippy component is installed.
 
 Before the end-to-end check, download the model weights and tokenizer:
 
