@@ -81,6 +81,8 @@ This is not competing with [MLX](https://github.com/ml-explore/mlx) / [llama.cpp
 - Rust 1.75 or later
 - Apple Silicon and macOS for the Metal backend. The CPU backend builds on other platforms; use `--backend cpu` there.
 
+> **CLI status:** the current quickstart exercises exported MLP checkpoints. GPT-2 assets and prediction checks remain available through the reference test suite.
+
 ```bash
 # 1. Build (Apple Silicon for Metal; the CPU path builds anywhere)
 cargo build --release
