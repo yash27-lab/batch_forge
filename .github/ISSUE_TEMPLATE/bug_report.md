@@ -17,6 +17,7 @@ Provide the smallest command or code sample that reproduces the issue.
 - OS and hardware:
 - Rust version (`rustc --version`):
 - Backend (`cpu` or `metal`):
+- Does the issue reproduce with the CPU backend?
 
 ## Expected behavior
 
