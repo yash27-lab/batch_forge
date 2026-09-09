@@ -19,3 +19,7 @@ Describe any workarounds or alternative approaches.
 ## Success criteria
 
 What outcome would make this feature complete?
+
+## Compatibility or performance impact
+
+Note any expected platform, API, memory, or throughput tradeoffs.
