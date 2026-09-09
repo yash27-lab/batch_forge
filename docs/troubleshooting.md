@@ -9,9 +9,9 @@ python python/make_demo_model.py
 cargo run --release -- --backend cpu
 ```
 
-## GPT-2 assets are missing
+## GPT-2 reference assets are missing
 
-Model weights and tokenizer files are intentionally not committed. Download them before running generation or the end-to-end reference check:
+Model weights and tokenizer files are intentionally not committed. Download them before running the GPT-2 end-to-end reference check:
 
 ```bash
 python python/fetch_gpt2.py
