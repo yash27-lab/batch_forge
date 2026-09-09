@@ -97,6 +97,7 @@ cargo run --release -- --model model.safetensors --backend cpu
 cargo run --release -- --model model.safetensors --verify reference.safetensors
 
 # 5. Tests + benchmarks
+cargo test --lib                            # portable CPU reference tests
 cargo test --test parity -- --nocapture    # CPU↔Metal parity (Apple Silicon)
 cargo run --release --bin bench            # matmul/gelu/MLP numbers on your machine
 ```
