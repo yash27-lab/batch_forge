@@ -6,6 +6,10 @@ Describe the change and why it is needed.
 
 - [ ] Public API docs and user-facing guides updated when applicable
 
+## Tests
+
+- [ ] Relevant tests added or updated when behavior changes
+
 ## Validation
 
 - [ ] `cargo fmt --check`
