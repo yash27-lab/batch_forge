@@ -1,6 +1,7 @@
 ---
 name: Bug report
 about: Report an incorrect result, crash, or unexpected runtime behavior
+title: "[Bug]: "
 labels: bug
 ---
 
