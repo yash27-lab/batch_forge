@@ -2,6 +2,10 @@
 
 Describe the change and why it is needed.
 
+## Risks
+
+Note any compatibility, performance, or behavior risks.
+
 ## Documentation
 
 - [ ] Public API docs and user-facing guides updated when applicable
