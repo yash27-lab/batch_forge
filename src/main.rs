@@ -92,7 +92,7 @@ OPTIONS:\n\
     -m, --model PATH      Safetensors checkpoint (default: model.safetensors)\n\
     -b, --backend WHICH   Which backend(s) to run (default: both on macOS, cpu elsewhere)\n\
     -v, --verify PATH     Reference safetensors with `input`/`output`; checks numerical parity\n\
-    -r, --requests N      Run the async engine with N concurrent requests\n\
+    -r, --requests N      Run the async engine with N concurrent requests (default: 0)\n\
     -p, --prompt TEXT     Accepted for compatibility; currently ignored\n\
     -h, --help            Show this help\n\
 \n\
