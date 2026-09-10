@@ -1,6 +1,7 @@
 ---
 name: Feature request
 about: Propose an improvement to batch_forge
+title: "[Feature]: "
 labels: enhancement
 ---
 
