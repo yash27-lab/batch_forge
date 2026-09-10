@@ -15,4 +15,4 @@ The formatting, compile, lint, and library-test preflight is CPU-only and needs 
 
 ## Reporting issues
 
-Use the issue templates when reporting a bug or proposing an enhancement. For runtime bugs, include the backend, hardware, and smallest reproduction command.
+Use the issue templates when reporting a bug or proposing an enhancement; their `bug` and `enhancement` labels help keep reports organized. For runtime bugs, include the backend, hardware, and smallest reproduction command.
