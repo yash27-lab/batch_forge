@@ -179,16 +179,21 @@ impl Tensor {
     }
 
     /// Maximum absolute element-wise difference against another tensor of equal shape.
-    /// Useful for parity / tolerance assertions. Returns `f32::INFINITY` on shape mismatch.
+    /// Useful for parity / tolerance assertions. Returns `f32::INFINITY` on shape or
+    /// data-length mismatch, or when an element-wise difference is not finite.
     pub fn max_abs_diff(&self, other: &Tensor) -> f32 {
-        if self.shape != other.shape {
+        if self.shape != other.shape || self.data.len() != other.data.len() {
             return f32::INFINITY;
         }
-        self.data
-            .iter()
-            .zip(&other.data)
-            .map(|(a, b)| (a - b).abs())
-            .fold(0.0_f32, f32::max)
+        let mut max_diff = 0.0_f32;
+        for (a, b) in self.data.iter().zip(&other.data) {
+            let diff = (a - b).abs();
+            if !diff.is_finite() {
+                return f32::INFINITY;
+            }
+            max_diff = max_diff.max(diff);
+        }
+        max_diff
     }
 }
 
@@ -240,5 +245,27 @@ mod tests {
             Tensor::new(Vec::new(), vec![usize::MAX, 2]),
             Err(TensorError::BufferOverflow)
         ));
+    }
+
+    #[test]
+    fn test_max_abs_diff_rejects_non_finite_values() {
+        let finite = Tensor::new(vec![0.0], vec![1]).unwrap();
+        for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let invalid = Tensor::new(vec![value], vec![1]).unwrap();
+            assert_eq!(invalid.max_abs_diff(&finite), f32::INFINITY);
+            assert_eq!(finite.max_abs_diff(&invalid), f32::INFINITY);
+            assert_eq!(invalid.max_abs_diff(&invalid), f32::INFINITY);
+        }
+    }
+
+    #[test]
+    fn test_max_abs_diff_rejects_mismatched_data_lengths() {
+        let valid = Tensor::new(vec![1.0, 2.0], vec![2]).unwrap();
+        let truncated = Tensor {
+            data: vec![1.0],
+            shape: vec![2],
+        };
+        assert_eq!(valid.max_abs_diff(&truncated), f32::INFINITY);
+        assert_eq!(truncated.max_abs_diff(&valid), f32::INFINITY);
     }
 }
