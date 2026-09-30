@@ -140,8 +140,11 @@ pub struct Tensor {
 
 impl Tensor {
     /// Creates a tensor from data, validating that the element count matches the shape.
+    /// Returns [`TensorError::BufferOverflow`] if the shape's element count overflows.
     pub fn new(data: Vec<f32>, shape: Vec<usize>) -> Result<Self, TensorError> {
-        let expected: usize = shape.iter().product();
+        let expected = shape.iter().try_fold(1usize, |elements, &dim| {
+            elements.checked_mul(dim).ok_or(TensorError::BufferOverflow)
+        })?;
         if data.len() != expected {
             return Err(TensorError::ShapeMismatch {
                 expected,
@@ -229,5 +232,13 @@ mod tests {
         let a = Tensor::new(vec![1.0, 2.0, 3.0], vec![3]).unwrap();
         let b = Tensor::new(vec![1.0, 2.5, 3.0], vec![3]).unwrap();
         assert!((a.max_abs_diff(&b) - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_owned_tensor_rejects_shape_overflow() {
+        assert!(matches!(
+            Tensor::new(Vec::new(), vec![usize::MAX, 2]),
+            Err(TensorError::BufferOverflow)
+        ));
     }
 }
