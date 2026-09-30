@@ -24,6 +24,10 @@ output or it doesn't.
    against a reference `output` exported alongside the weights by the Python
    tooling (JAX in `export_eqx.py`, NumPy in `make_demo_model.py`).
 
+Tensor and Metal parity comparisons treat non-finite differences as failures.
+NaN outputs cannot disappear from the maximum-difference calculation and be
+reported as an exact match.
+
 ```bash
 cargo test --lib
 cargo test --test parity -- --nocapture
