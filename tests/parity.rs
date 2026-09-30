@@ -41,8 +41,23 @@ fn max_diff(a: &[f32], b: &[f32]) -> f32 {
     assert_eq!(a.len(), b.len(), "length mismatch");
     a.iter()
         .zip(b)
-        .map(|(x, y)| (x - y).abs())
+        .map(|(x, y)| {
+            let diff = (x - y).abs();
+            if diff.is_finite() {
+                diff
+            } else {
+                f32::INFINITY
+            }
+        })
         .fold(0.0f32, f32::max)
+}
+
+#[test]
+fn max_diff_rejects_non_finite_values() {
+    for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        assert_eq!(max_diff(&[value], &[0.0]), f32::INFINITY);
+        assert_eq!(max_diff(&[value], &[value]), f32::INFINITY);
+    }
 }
 
 fn backend() -> MetalBackend {
