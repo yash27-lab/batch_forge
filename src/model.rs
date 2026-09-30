@@ -5,7 +5,7 @@
 //! [`CpuBackend`] reference and on the Metal backend, which is how the
 //! end-to-end test asserts CPU/GPU agreement.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use thiserror::Error;
 
 use crate::ops;
@@ -19,6 +19,8 @@ pub enum ModelError {
     BadShape { name: String, shape: Vec<usize> },
     #[error("no layers found in checkpoint")]
     NoLayers,
+    #[error("non-contiguous layer indices: expected layers.{expected}, found layers.{found}")]
+    NonContiguousLayers { expected: usize, found: usize },
     #[error("dimension mismatch: layer expects input width {expected}, got {got}")]
     WidthMismatch { expected: usize, got: usize },
 }
@@ -70,6 +72,21 @@ impl Mlp {
     /// Builds an MLP from a name→tensor map using the `layers.{i}.weight` /
     /// `layers.{i}.bias` naming emitted by the exporter.
     pub fn from_tensors(map: &HashMap<String, Tensor>) -> Result<Self, ModelError> {
+        let layer_indices: BTreeSet<usize> = map
+            .keys()
+            .filter_map(|name| {
+                name.strip_prefix("layers.")?
+                    .strip_suffix(".weight")?
+                    .parse()
+                    .ok()
+            })
+            .collect();
+        for (expected, &found) in layer_indices.iter().enumerate() {
+            if expected != found {
+                return Err(ModelError::NonContiguousLayers { expected, found });
+            }
+        }
+
         let mut layers = Vec::new();
         let mut i = 0;
         loop {
