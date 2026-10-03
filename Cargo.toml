@@ -2,17 +2,39 @@
 name = "batch_forge"
 version = "0.1.0"
 edition = "2021"
-description = "High-performance inference engine for JAX/Equinox models in Rust"
+rust-version = "1.75"
+description = "Correctness-first Metal inference runtime for JAX/Equinox models, written in Rust"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/yash27-lab/batch_forge"
+keywords = ["inference", "metal", "apple-silicon", "jax", "llm"]
+categories = ["science", "hardware-support"]
+
+[lib]
+name = "batch_forge"
+path = "src/lib.rs"
+
+[[bin]]
+name = "batch_forge"
+path = "src/main.rs"
+
+[[bin]]
+name = "bench"
+path = "src/bin/bench.rs"
 
 [dependencies]
 safetensors = "0.4"
 memmap2 = "0.9"
+serde_json = "1"
 bytemuck = { version = "1.14", features = ["derive"] }
 thiserror = "1.0"
 tracing = "0.1"
-tracing-subscriber = "0.3"
-tokio = { version = "1", features = ["full"] }
-futures = "0.3"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 metal = "0.28"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

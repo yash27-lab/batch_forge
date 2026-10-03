@@ -1,0 +1,26 @@
+---
+name: Feature request
+about: Propose an improvement to batch_forge
+title: "[Feature]: "
+labels: enhancement
+---
+
+## Problem
+
+What limitation or workflow does this improve?
+
+## Proposed change
+
+Describe the behavior or API you would like.
+
+## Alternatives considered
+
+Describe any workarounds or alternative approaches.
+
+## Success criteria
+
+What outcome would make this feature complete?
+
+## Compatibility or performance impact
+
+Note any expected platform, API, memory, or throughput tradeoffs.

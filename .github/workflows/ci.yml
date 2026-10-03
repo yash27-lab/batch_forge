@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  # Portable path: the CPU reference, loader, model, and async engine build and
+  # test on Linux (the Metal backend is cfg'd out on non-macOS targets).
+  lint-and-test:
+    name: fmt + clippy + test (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+      - name: clippy
+        run: cargo clippy --all-targets
+      - name: test (CPU)
+        run: cargo test --lib
+
+  # Apple Silicon: full build incl. Metal kernels + CPU unit tests. The on-device
+  # CPU↔Metal parity suite (`cargo test --test parity`) needs a Metal device and
+  # is run locally; see docs/correctness.md.
+  macos-build:
+    name: build + test (macos)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: clippy (incl. Metal backend)
+        run: cargo clippy --all-targets
+      - name: build
+        run: cargo build --release --all-targets
+      - name: test (CPU unit tests)
+        run: cargo test --lib
