@@ -10,6 +10,8 @@ pub enum TensorError {
     ShapeMismatch { expected: usize, found: usize },
     #[error("Buffer overflow detected when computing tensor size")]
     BufferOverflow,
+    #[error("Failed to allocate tensor buffer for {elements} elements")]
+    AllocationFailed { elements: usize },
     #[error("Expected a {expected}-D tensor, found shape {shape:?}")]
     RankMismatch { expected: usize, shape: Vec<usize> },
     #[error("Tensor is dtype {0:?}, expected F32")]
@@ -118,14 +120,14 @@ impl<'data> TensorView<'data> {
     }
 }
 
+fn checked_numel(shape: &[usize]) -> Result<usize, TensorError> {
+    shape.iter().try_fold(1usize, |elements, &dim| {
+        elements.checked_mul(dim).ok_or(TensorError::BufferOverflow)
+    })
+}
+
 fn num_bytes(shape: &[usize], dtype: DataType) -> Result<usize, TensorError> {
-    let mut elements: usize = 1;
-    for dim in shape {
-        elements = elements
-            .checked_mul(*dim)
-            .ok_or(TensorError::BufferOverflow)?;
-    }
-    elements
+    checked_numel(shape)?
         .checked_mul(dtype.size_in_bytes())
         .ok_or(TensorError::BufferOverflow)
 }
@@ -142,9 +144,7 @@ impl Tensor {
     /// Creates a tensor from data, validating that the element count matches the shape.
     /// Returns [`TensorError::BufferOverflow`] if the shape's element count overflows.
     pub fn new(data: Vec<f32>, shape: Vec<usize>) -> Result<Self, TensorError> {
-        let expected = shape.iter().try_fold(1usize, |elements, &dim| {
-            elements.checked_mul(dim).ok_or(TensorError::BufferOverflow)
-        })?;
+        let expected = checked_numel(&shape)?;
         if data.len() != expected {
             return Err(TensorError::ShapeMismatch {
                 expected,
@@ -155,12 +155,23 @@ impl Tensor {
     }
 
     /// A zero-filled tensor of the given shape.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the shape overflows or the backing buffer cannot be allocated.
+    /// Use [`Tensor::try_zeros`] when those failures need to be handled.
     pub fn zeros(shape: Vec<usize>) -> Self {
-        let n = shape.iter().product();
-        Self {
-            data: vec![0.0; n],
-            shape,
-        }
+        Self::try_zeros(shape).expect("failed to allocate zero-filled tensor")
+    }
+
+    /// Creates a zero-filled tensor, returning shape-overflow and allocation errors.
+    pub fn try_zeros(shape: Vec<usize>) -> Result<Self, TensorError> {
+        let elements = checked_numel(&shape)?;
+        let mut data = Vec::new();
+        data.try_reserve_exact(elements)
+            .map_err(|_| TensorError::AllocationFailed { elements })?;
+        data.resize(elements, 0.0);
+        Ok(Self { data, shape })
     }
 
     pub fn numel(&self) -> usize {
@@ -267,5 +278,26 @@ mod tests {
         };
         assert_eq!(valid.max_abs_diff(&truncated), f32::INFINITY);
         assert_eq!(truncated.max_abs_diff(&valid), f32::INFINITY);
+    }
+
+    #[test]
+    fn test_fallible_zeros_rejects_shape_overflow() {
+        assert!(matches!(
+            Tensor::try_zeros(vec![usize::MAX, 2]),
+            Err(TensorError::BufferOverflow)
+        ));
+    }
+
+    #[test]
+    fn test_fallible_zeros_preserves_empty_shape() {
+        let tensor = Tensor::try_zeros(vec![2, 0, 3]).unwrap();
+        assert_eq!(tensor.shape, vec![2, 0, 3]);
+        assert!(tensor.data.is_empty());
+    }
+
+    #[test]
+    fn test_fallible_zeros_initializes_values() {
+        let tensor = Tensor::try_zeros(vec![2, 2]).unwrap();
+        assert_eq!(tensor.data, vec![0.0; 4]);
     }
 }
