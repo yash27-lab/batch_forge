@@ -17,6 +17,12 @@ pub enum TokenizerError {
     Io(#[from] std::io::Error),
     #[error("failed to parse vocab.json: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("vocab.json assigns token ID {0} to more than one token")]
+    DuplicateTokenId(usize),
+    #[error("vocab.json is missing token ID {0} from its dense range")]
+    MissingTokenId(usize),
+    #[error("vocab.json is missing tokenizer symbol {0:?}")]
+    MissingVocabSymbol(String),
 }
 
 pub struct Tokenizer {
@@ -55,13 +61,38 @@ fn bytes_to_unicode() -> [char; 256] {
 }
 
 impl Tokenizer {
-    /// Loads a tokenizer from `vocab.json` and `merges.txt`.
+    /// Loads a tokenizer from vocab.json and merges.txt.
     pub fn from_files(vocab_path: &Path, merges_path: &Path) -> Result<Self, TokenizerError> {
         let vocab_raw = fs::read_to_string(vocab_path)?;
         let vocab: HashMap<String, usize> = serde_json::from_str(&vocab_raw)?;
-        let decoder: HashMap<usize, String> = vocab.iter().map(|(k, &v)| (v, k.clone())).collect();
-
         let merges_raw = fs::read_to_string(merges_path)?;
+        Self::from_assets(vocab, &merges_raw)
+    }
+
+    fn from_assets(
+        vocab: HashMap<String, usize>,
+        merges_raw: &str,
+    ) -> Result<Self, TokenizerError> {
+        let mut decoder = HashMap::with_capacity(vocab.len());
+        for (token, &id) in &vocab {
+            if decoder.insert(id, token.clone()).is_some() {
+                return Err(TokenizerError::DuplicateTokenId(id));
+            }
+        }
+        for id in 0..vocab.len() {
+            if !decoder.contains_key(&id) {
+                return Err(TokenizerError::MissingTokenId(id));
+            }
+        }
+
+        let byte_encoder = bytes_to_unicode();
+        for &symbol in &byte_encoder {
+            let symbol = symbol.to_string();
+            if !vocab.contains_key(&symbol) {
+                return Err(TokenizerError::MissingVocabSymbol(symbol));
+            }
+        }
+
         let mut bpe_ranks = HashMap::new();
         for (rank, line) in merges_raw
             .lines()
@@ -70,11 +101,14 @@ impl Tokenizer {
         {
             let mut it = line.split_whitespace();
             if let (Some(a), Some(b)) = (it.next(), it.next()) {
+                let merged = format!("{a}{b}");
+                if !vocab.contains_key(&merged) {
+                    return Err(TokenizerError::MissingVocabSymbol(merged));
+                }
                 bpe_ranks.insert((a.to_string(), b.to_string()), rank);
             }
         }
 
-        let byte_encoder = bytes_to_unicode();
         let byte_decoder = byte_encoder
             .iter()
             .enumerate()
@@ -273,5 +307,58 @@ mod tests {
         ] {
             assert_eq!(tok.decode(&tok.encode(s)), s);
         }
+    }
+
+    fn byte_vocab() -> HashMap<String, usize> {
+        bytes_to_unicode()
+            .iter()
+            .enumerate()
+            .map(|(id, symbol)| (symbol.to_string(), id))
+            .collect()
+    }
+
+    #[test]
+    fn rejects_duplicate_token_ids() {
+        let vocab = HashMap::from([("first".to_string(), 0), ("second".to_string(), 0)]);
+        assert!(matches!(
+            Tokenizer::from_assets(vocab, ""),
+            Err(TokenizerError::DuplicateTokenId(0))
+        ));
+    }
+
+    #[test]
+    fn rejects_sparse_token_ids() {
+        let vocab = HashMap::from([("first".to_string(), 0), ("third".to_string(), 2)]);
+        assert!(matches!(
+            Tokenizer::from_assets(vocab, ""),
+            Err(TokenizerError::MissingTokenId(1))
+        ));
+    }
+
+    #[test]
+    fn rejects_vocab_missing_a_byte_symbol() {
+        let vocab = HashMap::from([("a".to_string(), 0)]);
+        assert!(matches!(
+            Tokenizer::from_assets(vocab, ""),
+            Err(TokenizerError::MissingVocabSymbol(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_merge_results_missing_from_vocab() {
+        let vocab = byte_vocab();
+        assert!(matches!(
+            Tokenizer::from_assets(vocab, "#version: 0.2\na b\n"),
+            Err(TokenizerError::MissingVocabSymbol(symbol)) if symbol == "ab"
+        ));
+    }
+
+    #[test]
+    fn valid_byte_vocab_encodes_and_decodes_a_merge() {
+        let mut vocab = byte_vocab();
+        vocab.insert("ab".to_string(), 256);
+        let tokenizer = Tokenizer::from_assets(vocab, "#version: 0.2\na b\n").unwrap();
+        assert_eq!(tokenizer.encode("ab"), vec![256]);
+        assert_eq!(tokenizer.decode(&[256]), "ab");
     }
 }
