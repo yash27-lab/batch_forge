@@ -348,7 +348,7 @@ mod tests {
     fn rejects_merge_results_missing_from_vocab() {
         let vocab = byte_vocab();
         assert!(matches!(
-            Tokenizer::from_assets(vocab, "#version: 0.2\\na b\\n"),
+            Tokenizer::from_assets(vocab, "#version: 0.2\na b\n"),
             Err(TokenizerError::MissingVocabSymbol(symbol)) if symbol == "ab"
         ));
     }
@@ -357,7 +357,7 @@ mod tests {
     fn valid_byte_vocab_encodes_and_decodes_a_merge() {
         let mut vocab = byte_vocab();
         vocab.insert("ab".to_string(), 256);
-        let tokenizer = Tokenizer::from_assets(vocab, "#version: 0.2\\na b\\n").unwrap();
+        let tokenizer = Tokenizer::from_assets(vocab, "#version: 0.2\na b\n").unwrap();
         assert_eq!(tokenizer.encode("ab"), vec![256]);
         assert_eq!(tokenizer.decode(&[256]), "ab");
     }
