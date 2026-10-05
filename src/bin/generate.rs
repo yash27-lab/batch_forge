@@ -151,39 +151,40 @@ fn main() -> ExitCode {
         Ok(Command::Run(args)) => args,
         Err(error) => { eprintln!("error: {error}\nUse --help for usage."); return ExitCode::from(2); }
     };
-    let model_path = args.model_dir.join("model.safetensors");
-    if !model_path.exists() {
-        eprintln!(
-            "GPT-2 weights not found at {}.\nDownload them with:\n  \
-             python python/fetch_gpt2.py    (or)\n  \
-             curl -L https://huggingface.co/openai-community/gpt2/resolve/main/model.safetensors -o {}",
-            model_path.display(),
-            model_path.display()
-        );
-        std::process::exit(1);
+    match execute(&args) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => { eprintln!("error: {error}"); ExitCode::FAILURE }
     }
+}
 
+fn execute(args: &Args) -> Result<(), String> {
+    let model_path = args.model_dir.join("model.safetensors");
+    if !model_path.is_file() {
+        return Err(format!("GPT-2 weights not found at {}. Download with python python/fetch_gpt2.py, or use --model-dir to locate your assets.", model_path.display()));
+    }
     eprintln!("loading GPT-2 weights …");
-    let tensors = loader::load_safetensors(&model_path).expect("load weights");
-    let model = Gpt2::from_tensors(tensors, Config::default()).expect("build model");
+    let tensors = loader::load_safetensors(&model_path).map_err(|e| format!("load {}: {e}", model_path.display()))?;
+    let model = Gpt2::from_tensors(tensors, Config::default()).map_err(|e| format!("build GPT-2: {e}"))?;
     let tok = Tokenizer::from_files(
         &args.model_dir.join("vocab.json"),
         &args.model_dir.join("merges.txt"),
-    )
-    .expect("load tokenizer");
+    ).map_err(|e| format!("load tokenizer from {}: {e}", args.model_dir.display()))?;
+    if tok.vocab_size() != model.config.vocab_size {
+        return Err(format!("tokenizer has {} tokens, but model expects {}", tok.vocab_size(), model.config.vocab_size));
+    }
 
     #[cfg(target_os = "macos")]
     if args.backend == "metal" {
         match batch_forge::metal_backend::MetalBackend::new(batch_forge::SHADER_SOURCE) {
             Ok(m) => {
-                run(&m, &model, &tok, &args);
-                return ExitCode::SUCCESS;
+                run(&m, &model, &tok, args);
+                return Ok(());
             }
             Err(e) => eprintln!("Metal unavailable ({e}); using CPU"),
         }
     }
-    run(&batch_forge::model::CpuBackend, &model, &tok, &args);
-    ExitCode::SUCCESS
+    run(&batch_forge::model::CpuBackend, &model, &tok, args);
+    Ok(())
 }
 
 #[cfg(test)]
