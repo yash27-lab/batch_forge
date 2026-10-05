@@ -44,3 +44,27 @@ Install the Clippy component for the active toolchain, then rerun the lint check
 rustup component add clippy
 cargo clippy --all-targets
 ```
+
+## Generation arguments and checkpoints
+
+Run cargo run --bin generate -- --help for generation options. Unknown flags,
+missing values, invalid integers, and non-finite or negative temperatures return
+an error before loading assets. A zero top-k disables filtering; --greedy takes
+precedence over temperature regardless of option order.
+
+A checkpoint must match the default GPT-2 small configuration. Incorrect shapes,
+inconsistent tokenizer IDs, and mismatched vocabulary sizes are reported at load
+time. Keep model.safetensors, vocab.json, and merges.txt from the same model
+under the directory selected by --model-dir.
+
+Generation streams complete UTF-8 characters even when a character spans tokens.
+Diagnostics go to stderr. A consumer that closes a pipe early stops generation
+without a panic. Invalid bytes are replaced, and an unfinished final character
+is replaced only at the end of the stream.
+
+## MLP verification exit status
+
+The default MLP binary returns failure for missing checkpoints, invalid input
+buffers, failed inference requests, and failed numerical checks. A reference
+file selected with --verify must contain both input and output; a
+synthetic fallback is not used to claim verification.

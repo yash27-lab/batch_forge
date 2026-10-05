@@ -25,8 +25,14 @@ jobs:
         run: cargo fmt --all -- --check
       - name: clippy
         run: cargo clippy --all-targets
-      - name: test (CPU)
-        run: cargo test --lib
+      - name: test (CPU and CLI)
+        run: cargo test --lib --bins
+      - name: CLI smoke tests without model assets
+        run: |
+          cargo run --quiet --bin generate -- --help
+          cargo run --quiet --bin generate -- --version
+          if cargo run --quiet --bin generate -- --temperature NaN; then exit 1; fi
+          if cargo run --quiet --bin batch_forge -- --model /missing/checkpoint.safetensors; then exit 1; fi
 
   # Apple Silicon: full build incl. Metal kernels + CPU unit tests. The on-device
   # CPU↔Metal parity suite (`cargo test --test parity`) needs a Metal device and
@@ -45,4 +51,4 @@ jobs:
       - name: build
         run: cargo build --release --all-targets
       - name: test (CPU unit tests)
-        run: cargo test --lib
+        run: cargo test --lib --bins
