@@ -121,6 +121,9 @@ impl<'data> TensorView<'data> {
 }
 
 fn checked_numel(shape: &[usize]) -> Result<usize, TensorError> {
+    if shape.contains(&0) {
+        return Ok(0);
+    }
     shape.iter().try_fold(1usize, |elements, &dim| {
         elements.checked_mul(dim).ok_or(TensorError::BufferOverflow)
     })
@@ -299,5 +302,12 @@ mod tests {
     fn test_fallible_zeros_initializes_values() {
         let tensor = Tensor::try_zeros(vec![2, 2]).unwrap();
         assert_eq!(tensor.data, vec![0.0; 4]);
+    }
+
+    #[test]
+    fn zero_dimensions_short_circuit_overflow_in_any_order() {
+        for shape in [vec![usize::MAX, 2, 0], vec![0, usize::MAX, 2]] {
+            assert!(Tensor::try_zeros(shape).unwrap().data.is_empty());
+        }
     }
 }
