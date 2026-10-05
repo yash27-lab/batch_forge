@@ -8,6 +8,8 @@ pub enum TensorError {
     UnsupportedDtype(Dtype),
     #[error("Shape mismatch: expected {expected} bytes, found {found}")]
     ShapeMismatch { expected: usize, found: usize },
+    #[error("Shape mismatch: expected {expected} elements, found {found}")]
+    ElementCountMismatch { expected: usize, found: usize },
     #[error("Buffer overflow detected when computing tensor size")]
     BufferOverflow,
     #[error("Failed to allocate tensor buffer for {elements} elements")]
@@ -150,7 +152,7 @@ impl Tensor {
     pub fn new(data: Vec<f32>, shape: Vec<usize>) -> Result<Self, TensorError> {
         let expected = checked_numel(&shape)?;
         if data.len() != expected {
-            return Err(TensorError::ShapeMismatch {
+            return Err(TensorError::ElementCountMismatch {
                 expected,
                 found: data.len(),
             });
@@ -182,7 +184,7 @@ impl Tensor {
     pub fn validate(&self) -> Result<(), TensorError> {
         let expected = checked_numel(&self.shape)?;
         if self.data.len() != expected {
-            return Err(TensorError::ShapeMismatch { expected, found: self.data.len() });
+            return Err(TensorError::ElementCountMismatch { expected, found: self.data.len() });
         }
         Ok(())
     }
