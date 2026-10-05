@@ -317,6 +317,22 @@ impl Gpt2 {
         eot_token: usize,
         mut on_token: impl FnMut(usize),
     ) -> Vec<usize> {
+        self.generate_while(backend, prompt, max_new, sampler, eot_token, |token| {
+            on_token(token);
+            true
+        })
+    }
+
+    /// Generates until end-of-text, max_new, or the callback returns false.
+    pub fn generate_while<B: LlmOps + ?Sized>(
+        &self,
+        backend: &B,
+        prompt: &[usize],
+        max_new: usize,
+        sampler: &Sampler,
+        eot_token: usize,
+        mut on_token: impl FnMut(usize) -> bool,
+    ) -> Vec<usize> {
         let mut toks = prompt.to_vec();
         let n_ctx = self.config.n_ctx;
         let mut rng = Rng::new(sampler.seed);
@@ -325,8 +341,7 @@ impl Gpt2 {
             let logits = self.forward(backend, &toks[start..]);
             let next = sampler.sample(&logits, &mut rng);
             toks.push(next);
-            on_token(next);
-            if next == eot_token {
+            if !on_token(next) || next == eot_token {
                 break;
             }
         }
@@ -486,5 +501,13 @@ mod tests {
     #[should_panic(expected = "exceeds GPT-2 context length")]
     fn overlong_forward_has_a_clear_precondition() {
         forward_test_model().forward(&crate::model::CpuBackend, &[0, 0, 0]);
+    }
+
+    #[test]
+    fn generation_callback_can_stop_after_one_token() {
+        let mut calls = 0;
+        let tokens = forward_test_model().generate_while(&crate::model::CpuBackend, &[0], 10, &Sampler::greedy(), 1, |_| { calls += 1; false });
+        assert_eq!(calls, 1);
+        assert_eq!(tokens.len(), 2);
     }
 }
