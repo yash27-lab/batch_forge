@@ -52,6 +52,10 @@ impl RequestManager {
         );
         let mut served = 0u64;
         while let Some(req) = self.request_rx.recv().await {
+            if req.response_tx.is_closed() {
+                debug!(request_id = req.request_id, "skipped canceled request");
+                continue;
+            }
             let out = self.model.forward(&*self.backend, &req.input);
             debug!(request_id = req.request_id, "served");
             // The receiver may have gone away; that's fine.
