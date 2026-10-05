@@ -15,10 +15,14 @@ use std::collections::HashMap;
 use thiserror::Error;
 
 use crate::ops;
-use crate::tensor::Tensor;
+use crate::tensor::{Tensor, TensorError};
 
 #[derive(Error, Debug)]
 pub enum Gpt2Error {
+    #[error("tensor '{name}' has shape {found:?}; expected {expected:?}")]
+    BadShape { name: String, expected: Vec<usize>, found: Vec<usize> },
+    #[error("invalid tensor: {0}")]
+    Tensor(#[from] TensorError),
     #[error("invalid GPT-2 configuration: {0}")]
     InvalidConfig(&'static str),
     #[error("missing tensor '{0}'")]
@@ -205,10 +209,13 @@ pub struct Gpt2 {
     lnf_b: Vec<f32>,
 }
 
-fn take(map: &mut HashMap<String, Tensor>, name: &str) -> Result<Vec<f32>, Gpt2Error> {
-    map.remove(name)
-        .map(|t| t.data)
-        .ok_or_else(|| Gpt2Error::Missing(name.to_string()))
+fn take(map: &mut HashMap<String, Tensor>, name: &str, shape: &[usize]) -> Result<Vec<f32>, Gpt2Error> {
+    let tensor = map.remove(name).ok_or_else(|| Gpt2Error::Missing(name.to_string()))?;
+    if tensor.shape != shape {
+        return Err(Gpt2Error::BadShape { name: name.to_string(), expected: shape.to_vec(), found: tensor.shape });
+    }
+    tensor.validate()?;
+    Ok(tensor.data)
 }
 
 impl Gpt2 {
@@ -218,26 +225,27 @@ impl Gpt2 {
         config: Config,
     ) -> Result<Self, Gpt2Error> {
         config.validate()?;
-        let wte = take(&mut map, "wte.weight")?;
-        let wpe = take(&mut map, "wpe.weight")?;
-        let lnf_w = take(&mut map, "ln_f.weight")?;
-        let lnf_b = take(&mut map, "ln_f.bias")?;
+        let d = config.n_embd;
+        let wte = take(&mut map, "wte.weight", &[config.vocab_size, d])?;
+        let wpe = take(&mut map, "wpe.weight", &[config.n_ctx, d])?;
+        let lnf_w = take(&mut map, "ln_f.weight", &[d])?;
+        let lnf_b = take(&mut map, "ln_f.bias", &[d])?;
         let mut layers = Vec::with_capacity(config.n_layer);
         for i in 0..config.n_layer {
             let p = format!("h.{i}.");
             layers.push(Layer {
-                ln1_w: take(&mut map, &format!("{p}ln_1.weight"))?,
-                ln1_b: take(&mut map, &format!("{p}ln_1.bias"))?,
-                attn_w: take(&mut map, &format!("{p}attn.c_attn.weight"))?,
-                attn_b: take(&mut map, &format!("{p}attn.c_attn.bias"))?,
-                proj_w: take(&mut map, &format!("{p}attn.c_proj.weight"))?,
-                proj_b: take(&mut map, &format!("{p}attn.c_proj.bias"))?,
-                ln2_w: take(&mut map, &format!("{p}ln_2.weight"))?,
-                ln2_b: take(&mut map, &format!("{p}ln_2.bias"))?,
-                fc_w: take(&mut map, &format!("{p}mlp.c_fc.weight"))?,
-                fc_b: take(&mut map, &format!("{p}mlp.c_fc.bias"))?,
-                fc_proj_w: take(&mut map, &format!("{p}mlp.c_proj.weight"))?,
-                fc_proj_b: take(&mut map, &format!("{p}mlp.c_proj.bias"))?,
+                ln1_w: take(&mut map, &format!("{p}ln_1.weight"), &[d])?,
+                ln1_b: take(&mut map, &format!("{p}ln_1.bias"), &[d])?,
+                attn_w: take(&mut map, &format!("{p}attn.c_attn.weight"), &[d, 3 * d])?,
+                attn_b: take(&mut map, &format!("{p}attn.c_attn.bias"), &[3 * d])?,
+                proj_w: take(&mut map, &format!("{p}attn.c_proj.weight"), &[d, d])?,
+                proj_b: take(&mut map, &format!("{p}attn.c_proj.bias"), &[d])?,
+                ln2_w: take(&mut map, &format!("{p}ln_2.weight"), &[d])?,
+                ln2_b: take(&mut map, &format!("{p}ln_2.bias"), &[d])?,
+                fc_w: take(&mut map, &format!("{p}mlp.c_fc.weight"), &[d, 4 * d])?,
+                fc_b: take(&mut map, &format!("{p}mlp.c_fc.bias"), &[4 * d])?,
+                fc_proj_w: take(&mut map, &format!("{p}mlp.c_proj.weight"), &[4 * d, d])?,
+                fc_proj_b: take(&mut map, &format!("{p}mlp.c_proj.bias"), &[d])?,
             });
         }
         Ok(Self {
@@ -441,5 +449,13 @@ mod tests {
         ] {
             assert!(matches!(Gpt2::from_tensors(HashMap::new(), config), Err(Gpt2Error::InvalidConfig(_))));
         }
+    }
+
+    #[test]
+    fn wrong_embedding_shape_is_rejected_at_load_time() {
+        let config = Config { n_layer: 1, n_head: 1, n_embd: 2, n_ctx: 2, vocab_size: 2, eps: 1e-5 };
+        let mut map = HashMap::new();
+        map.insert("wte.weight".into(), Tensor::zeros(vec![1, 4]));
+        assert!(matches!(Gpt2::from_tensors(map, config), Err(Gpt2Error::BadShape { .. })));
     }
 }
