@@ -19,6 +19,8 @@ use crate::tensor::Tensor;
 
 #[derive(Error, Debug)]
 pub enum Gpt2Error {
+    #[error("invalid GPT-2 configuration: {0}")]
+    InvalidConfig(&'static str),
     #[error("missing tensor '{0}'")]
     Missing(String),
 }
@@ -48,6 +50,23 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Validates dimensions before allocating model buffers or splitting attention heads.
+    pub fn validate(&self) -> Result<(), Gpt2Error> {
+        if self.n_layer == 0 || self.n_head == 0 || self.n_embd == 0 || self.n_ctx == 0 || self.vocab_size == 0 {
+            return Err(Gpt2Error::InvalidConfig("all dimensions must be positive"));
+        }
+        if self.n_embd % self.n_head != 0 {
+            return Err(Gpt2Error::InvalidConfig("embedding width must be divisible by head count"));
+        }
+        if !self.eps.is_finite() || self.eps <= 0.0 {
+            return Err(Gpt2Error::InvalidConfig("normalization epsilon must be finite and positive"));
+        }
+        if self.n_embd.checked_mul(4).is_none() {
+            return Err(Gpt2Error::InvalidConfig("projection width overflows"));
+        }
+        Ok(())
+    }
+
     pub fn head_dim(&self) -> usize {
         self.n_embd / self.n_head
     }
@@ -198,6 +217,7 @@ impl Gpt2 {
         mut map: HashMap<String, Tensor>,
         config: Config,
     ) -> Result<Self, Gpt2Error> {
+        config.validate()?;
         let wte = take(&mut map, "wte.weight")?;
         let wpe = take(&mut map, "wpe.weight")?;
         let lnf_w = take(&mut map, "ln_f.weight")?;
@@ -404,5 +424,22 @@ impl Rng {
         x ^= x << 17;
         self.0 = x;
         (x >> 40) as f32 / (1u64 << 24) as f32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_configs_fail_before_loading_weights() {
+        for config in [
+            Config { n_head: 0, ..Config::default() },
+            Config { n_embd: 7, ..Config::default() },
+            Config { eps: f32::NAN, ..Config::default() },
+            Config { n_ctx: 0, ..Config::default() },
+        ] {
+            assert!(matches!(Gpt2::from_tensors(HashMap::new(), config), Err(Gpt2Error::InvalidConfig(_))));
+        }
     }
 }
