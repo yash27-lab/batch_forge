@@ -8,6 +8,7 @@
 
 use std::io::Write;
 use std::path::Path;
+use std::process::ExitCode;
 use std::time::Instant;
 
 use batch_forge::gpt2::{Config, Gpt2, LlmOps, Sampler};
@@ -17,6 +18,7 @@ use batch_forge::tokenizer::Tokenizer;
 const EOT: usize = 50256; // <|endoftext|>
 const MODEL_DIR: &str = "models/gpt2";
 
+#[derive(Debug)]
 struct Args {
     prompt: String,
     max_new: usize,
@@ -26,36 +28,60 @@ struct Args {
     seed: u64,
 }
 
-fn parse_args() -> Args {
+enum Command {
+    Run(Args),
+    Help,
+    Version,
+}
+
+fn next_value(it: &mut impl Iterator<Item = String>, flag: &str) -> Result<String, String> {
+    it.next().ok_or_else(|| format!("{flag} needs a value"))
+}
+
+fn parse_args(arguments: impl IntoIterator<Item = String>) -> Result<Command, String> {
     let mut a = Args {
         prompt: "The meaning of life is".to_string(),
         max_new: 40,
-        backend: if cfg!(target_os = "macos") {
-            "metal"
-        } else {
-            "cpu"
-        }
-        .to_string(),
+        backend: if cfg!(target_os = "macos") { "metal" } else { "cpu" }.to_string(),
         temperature: 0.8,
         top_k: 40,
         seed: 42,
     };
-    let mut it = std::env::args().skip(1);
+    let mut greedy = false;
+    let mut it = arguments.into_iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
-            "--prompt" | "-p" => a.prompt = it.next().unwrap_or_default(),
-            "--max-new" | "-n" => a.max_new = it.next().and_then(|s| s.parse().ok()).unwrap_or(40),
-            "--backend" | "-b" => a.backend = it.next().unwrap_or_default(),
-            "--temperature" | "-t" => {
-                a.temperature = it.next().and_then(|s| s.parse().ok()).unwrap_or(0.8)
+            "--help" | "-h" => return Ok(Command::Help),
+            "--version" | "-V" => return Ok(Command::Version),
+            "--prompt" | "-p" => a.prompt = next_value(&mut it, &arg)?,
+            "--max-new" | "-n" => {
+                a.max_new = next_value(&mut it, &arg)?.parse().map_err(|_| "--max-new must be a positive integer")?;
+                if a.max_new == 0 { return Err("--max-new must be positive".into()); }
             }
-            "--top-k" | "-k" => a.top_k = it.next().and_then(|s| s.parse().ok()).unwrap_or(40),
-            "--seed" | "-s" => a.seed = it.next().and_then(|s| s.parse().ok()).unwrap_or(42),
-            "--greedy" => a.temperature = 0.0,
-            _ => {}
+            "--backend" | "-b" => {
+                a.backend = next_value(&mut it, &arg)?;
+                if !matches!(a.backend.as_str(), "cpu" | "metal") {
+                    return Err("--backend must be cpu or metal".into());
+                }
+            }
+            "--temperature" | "-t" => {
+                a.temperature = next_value(&mut it, &arg)?.parse().map_err(|_| "--temperature must be a number")?;
+                if !a.temperature.is_finite() || a.temperature < 0.0 {
+                    return Err("--temperature must be finite and non-negative".into());
+                }
+            }
+            "--top-k" | "-k" => a.top_k = next_value(&mut it, &arg)?.parse().map_err(|_| "--top-k must be a non-negative integer")?,
+            "--seed" | "-s" => a.seed = next_value(&mut it, &arg)?.parse().map_err(|_| "--seed must be an unsigned integer")?,
+            "--greedy" => greedy = true,
+            other => return Err(format!("unknown argument: {other}")),
         }
     }
-    a
+    if greedy { a.temperature = 0.0; }
+    Ok(Command::Run(a))
+}
+
+fn print_help() {
+    println!("GPT-2 text generation\n\nUSAGE:\n    generate [OPTIONS]\n\nOPTIONS:\n    -p, --prompt TEXT       Prompt (default: The meaning of life is)\n    -n, --max-new N         Maximum new tokens, positive integer (default: 40)\n    -b, --backend cpu|metal Compute backend (default: metal on macOS, cpu elsewhere)\n    -t, --temperature T     Finite, non-negative temperature (default: 0.8)\n    -k, --top-k K           Keep K candidates; 0 disables filtering (default: 40)\n    -s, --seed N            Sampling seed (default: 42)\n        --greedy           Force greedy sampling, regardless of option order\n    -h, --help             Show help without loading model assets\n    -V, --version          Show package version");
 }
 
 fn run<B: LlmOps>(backend: &B, model: &Gpt2, tok: &Tokenizer, args: &Args) {
@@ -111,8 +137,13 @@ fn run<B: LlmOps>(backend: &B, model: &Gpt2, tok: &Tokenizer, args: &Args) {
     let _ = n;
 }
 
-fn main() {
-    let args = parse_args();
+fn main() -> ExitCode {
+    let args = match parse_args(std::env::args().skip(1)) {
+        Ok(Command::Help) => { print_help(); return ExitCode::SUCCESS; }
+        Ok(Command::Version) => { println!("{}", env!("CARGO_PKG_VERSION")); return ExitCode::SUCCESS; }
+        Ok(Command::Run(args)) => args,
+        Err(error) => { eprintln!("error: {error}\nUse --help for usage."); return ExitCode::from(2); }
+    };
     let model_path = Path::new(MODEL_DIR).join("model.safetensors");
     if !model_path.exists() {
         eprintln!(
@@ -139,10 +170,47 @@ fn main() {
         match batch_forge::metal_backend::MetalBackend::new(batch_forge::SHADER_SOURCE) {
             Ok(m) => {
                 run(&m, &model, &tok, &args);
-                return;
+                return ExitCode::SUCCESS;
             }
             Err(e) => eprintln!("Metal unavailable ({e}); using CPU"),
         }
     }
     run(&batch_forge::model::CpuBackend, &model, &tok, &args);
+    ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(flags: &[&str]) -> Result<Command, String> {
+        parse_args(flags.iter().map(|s| s.to_string()))
+    }
+
+    #[test]
+    fn rejects_invalid_flags_values_and_missing_values() {
+        for args in [
+            vec!["--bogus"], vec!["--seed"], vec!["--max-new", "no"],
+            vec!["--max-new", "0"], vec!["--backend", "cuda"],
+            vec!["--temperature", "NaN"], vec!["--temperature", "inf"],
+            vec!["--temperature", "-1"], vec!["--top-k", "-2"],
+        ] {
+            assert!(parse(&args).is_err(), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn greedy_order_and_zero_sampling_values_are_explicit() {
+        for flags in [
+            vec!["--greedy", "--temperature", "1", "--top-k", "0", "--seed", "0"],
+            vec!["--temperature", "1", "--greedy", "--top-k", "0", "--seed", "0"],
+        ] {
+            let Command::Run(args) = parse(&flags).unwrap() else { panic!("expected run"); };
+            assert_eq!(args.temperature, 0.0);
+            assert_eq!(args.top_k, 0);
+            assert_eq!(args.seed, 0);
+        }
+        assert!(matches!(parse(&["--help"]), Ok(Command::Help)));
+        assert!(matches!(parse(&["--version"]), Ok(Command::Version)));
+    }
 }
