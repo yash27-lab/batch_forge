@@ -102,9 +102,10 @@ impl<'data> TensorView<'data> {
         if self.dtype != DataType::F32 {
             return Err(TensorError::NotF32(self.dtype));
         }
-        if self.data.len() % 4 != 0 {
+        let expected = num_bytes(&self.shape, self.dtype)?;
+        if self.data.len() != expected {
             return Err(TensorError::ShapeMismatch {
-                expected: self.numel() * 4,
+                expected,
                 found: self.data.len(),
             });
         }
@@ -309,5 +310,14 @@ mod tests {
         for shape in [vec![usize::MAX, 2, 0], vec![0, usize::MAX, 2]] {
             assert!(Tensor::try_zeros(shape).unwrap().data.is_empty());
         }
+    }
+
+    #[test]
+    fn conversion_revalidates_public_view_fields() {
+        let bytes = [0u8; 4];
+        let view = TensorView { shape: vec![2], dtype: DataType::F32, data: &bytes };
+        assert!(matches!(view.to_tensor_f32(), Err(TensorError::ShapeMismatch { .. })));
+        let overflowing = TensorView { shape: vec![usize::MAX, 2], ..view };
+        assert!(matches!(overflowing.to_tensor_f32(), Err(TensorError::BufferOverflow)));
     }
 }
