@@ -6,7 +6,7 @@
 //! tokenizer, runs the transformer on the Metal backend (or CPU), and streams
 //! decoded text.
 
-use std::io::Write;
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Instant;
@@ -91,60 +91,73 @@ fn print_help() {
     println!("GPT-2 text generation\n\nUSAGE:\n    generate [OPTIONS]\n\nOPTIONS:\n        --model-dir PATH   Directory containing all GPT-2 assets (default: models/gpt2)\n    -p, --prompt TEXT       Prompt (default: The meaning of life is)\n    -n, --max-new N         Maximum new tokens, positive integer (default: 40)\n    -b, --backend cpu|metal Compute backend (default: metal on macOS, cpu elsewhere)\n    -t, --temperature T     Finite, non-negative temperature (default: 0.8)\n    -k, --top-k K           Keep K candidates; 0 disables filtering (default: 40)\n    -s, --seed N            Sampling seed (default: 42)\n        --greedy           Force greedy sampling, regardless of option order\n    -h, --help             Show help without loading model assets\n    -V, --version          Show package version");
 }
 
-fn run<B: LlmOps>(backend: &B, model: &Gpt2, tok: &Tokenizer, args: &Args) {
-    let sampler = Sampler {
-        temperature: args.temperature,
-        top_k: args.top_k,
-        seed: args.seed,
-    };
-    let mut prompt_ids = tok.encode(&args.prompt);
-    if prompt_ids.is_empty() {
-        prompt_ids.push(EOT);
-    }
-    println!(
-        "backend={}  prompt_tokens={}  max_new={}  temp={}  top_k={}\n",
-        backend.name(),
-        prompt_ids.len(),
-        args.max_new,
-        args.temperature,
-        args.top_k
-    );
-
-    print!("{}", args.prompt);
-    std::io::stdout().flush().ok();
-
-    let mut generated: Vec<usize> = Vec::new();
-    let mut printed = 0usize;
-    let start = Instant::now();
-    model.generate(
-        backend,
-        &prompt_ids,
-        args.max_new,
-        &sampler,
-        EOT,
-        |tok_id| {
-            generated.push(tok_id);
-            // Decode the whole generated suffix and print only the new text, so
-            // multi-byte characters that span tokens render correctly.
-            let text = tok.decode(&generated);
-            if text.len() > printed {
-                print!("{}", &text[printed..]);
-                std::io::stdout().flush().ok();
-                printed = text.len();
+/// Emits complete UTF-8 scalars, retaining an incomplete suffix until more bytes arrive.
+fn drain_utf8(pending: &mut Vec<u8>, finish: bool) -> String {
+    let mut output = String::new();
+    let mut used = 0;
+    while used < pending.len() {
+        match std::str::from_utf8(&pending[used..]) {
+            Ok(text) => { output.push_str(text); used = pending.len(); }
+            Err(error) => {
+                let valid = error.valid_up_to();
+                output.push_str(&String::from_utf8_lossy(&pending[used..used + valid]));
+                used += valid;
+                if let Some(invalid) = error.error_len() {
+                    output.push('\u{fffd}');
+                    used += invalid;
+                } else if finish {
+                    output.push('\u{fffd}');
+                    used = pending.len();
+                } else {
+                    break;
+                }
             }
-        },
-    );
-    let elapsed = start.elapsed();
+        }
+    }
+    pending.drain(..used);
+    output
+}
 
-    let n = generated.len().max(1);
-    println!(
-        "\n\n[{} tokens in {:.2?}  =  {:.1} tok/s on {}]",
-        generated.len(),
-        elapsed,
-        generated.len() as f64 / elapsed.as_secs_f64(),
-        backend.name(),
-    );
-    let _ = n;
+fn run<B: LlmOps>(backend: &B, model: &Gpt2, tok: &Tokenizer, args: &Args) -> io::Result<()> {
+    let sampler = Sampler { temperature: args.temperature, top_k: args.top_k, seed: args.seed };
+    let mut prompt_ids = tok.encode(&args.prompt);
+    if prompt_ids.is_empty() { prompt_ids.push(EOT); }
+    eprintln!("backend={} prompt_tokens={} max_new={} temp={} top_k={}", backend.name(), prompt_ids.len(), args.max_new, args.temperature, args.top_k);
+    let mut stdout = io::stdout().lock();
+    write!(stdout, "{}", args.prompt)?;
+    stdout.flush()?;
+    let mut count = 0;
+    let mut pending = Vec::new();
+    let mut write_error = None;
+    let start = Instant::now();
+    model.generate_while(backend, &prompt_ids, args.max_new, &sampler, EOT, |token| {
+        count += 1;
+        if token == EOT { return true; }
+        pending.extend(tok.decode_bytes(&[token]));
+        let text = drain_utf8(&mut pending, false);
+        if !text.is_empty() {
+            if let Err(error) = write!(stdout, "{text}").and_then(|_| stdout.flush()) {
+                write_error = Some(error);
+                return false;
+            }
+        }
+        true
+    });
+    if let Some(error) = write_error { return Err(error); }
+    writeln!(stdout, "{}", drain_utf8(&mut pending, true))?;
+    stdout.flush()?;
+    let elapsed = start.elapsed();
+    let rate = count as f64 / elapsed.as_secs_f64().max(f64::MIN_POSITIVE);
+    eprintln!("[{count} tokens in {elapsed:.2?} = {rate:.1} tok/s on {}]", backend.name());
+    Ok(())
+}
+
+fn output_result(result: io::Result<()>) -> Result<(), String> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+        Err(error) => Err(format!("write generated text: {error}")),
+    }
 }
 
 fn main() -> ExitCode {
@@ -184,11 +197,9 @@ fn execute(args: &Args) -> Result<(), String> {
     if args.backend == "metal" {
         let metal = batch_forge::metal_backend::MetalBackend::new(batch_forge::SHADER_SOURCE)
             .map_err(|e| format!("initialize Metal: {e}"))?;
-        run(&metal, &model, &tok, args);
-        return Ok(());
+        return output_result(run(&metal, &model, &tok, args));
     }
-    run(&batch_forge::model::CpuBackend, &model, &tok, args);
-    Ok(())
+    output_result(run(&batch_forge::model::CpuBackend, &model, &tok, args))
 }
 
 #[cfg(test)]
@@ -231,5 +242,26 @@ mod tests {
         let Command::Run(args) = parse(&["--model-dir", "/tmp/weights"]).unwrap() else { panic!("expected run"); };
         assert_eq!(args.model_dir, PathBuf::from("/tmp/weights"));
         assert!(parse(&["--model-dir", ""]).is_err());
+    }
+
+    #[test]
+    fn utf8_scalar_split_over_three_tokens_streams_once() {
+        let mut pending = vec![0xe2];
+        assert_eq!(drain_utf8(&mut pending, false), "");
+        pending.push(0x82);
+        assert_eq!(drain_utf8(&mut pending, false), "");
+        pending.push(0xac);
+        assert_eq!(drain_utf8(&mut pending, false), "€");
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn invalid_and_unfinished_utf8_have_predictable_replacement() {
+        let mut pending = vec![b'a', 0xff, 0xe2];
+        assert_eq!(drain_utf8(&mut pending, false), "a\u{fffd}");
+        assert_eq!(drain_utf8(&mut pending, true), "\u{fffd}");
+        assert!(pending.is_empty());
+        assert!(output_result(Err(io::Error::from(io::ErrorKind::BrokenPipe))).is_ok());
+        assert!(output_result(Err(io::Error::from(io::ErrorKind::PermissionDenied))).is_err());
     }
 }

@@ -148,16 +148,20 @@ impl Tokenizer {
 
     /// Decodes token ids back into text.
     pub fn decode(&self, ids: &[usize]) -> String {
+        String::from_utf8_lossy(&self.decode_bytes(ids)).into_owned()
+    }
+
+    /// Decodes raw bytes, allowing streaming callers to retain partial UTF-8 sequences.
+    pub fn decode_bytes(&self, ids: &[usize]) -> Vec<u8> {
         let mapped: String = ids
             .iter()
             .filter_map(|id| self.decoder.get(id))
             .flat_map(|s| s.chars())
             .collect();
-        let bytes: Vec<u8> = mapped
+        mapped
             .chars()
             .filter_map(|c| self.byte_decoder.get(&c).copied())
-            .collect();
-        String::from_utf8_lossy(&bytes).into_owned()
+            .collect()
     }
 
     /// Applies BPE merges to one pre-tokenized, byte-mapped chunk.
