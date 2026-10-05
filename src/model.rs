@@ -9,10 +9,14 @@ use std::collections::{BTreeSet, HashMap};
 use thiserror::Error;
 
 use crate::ops;
-use crate::tensor::Tensor;
+use crate::tensor::{Tensor, TensorError};
 
 #[derive(Error, Debug)]
 pub enum ModelError {
+    #[error("inference engine closed before returning a result")]
+    EngineClosed,
+    #[error("invalid tensor: {0}")]
+    Tensor(#[from] TensorError),
     #[error("missing tensor '{0}' in checkpoint")]
     MissingTensor(String),
     #[error("tensor '{name}' has unexpected shape {shape:?}")]
@@ -96,6 +100,8 @@ impl Mlp {
             let b = map
                 .get(&b_name)
                 .ok_or_else(|| ModelError::MissingTensor(b_name.clone()))?;
+            w.validate()?;
+            b.validate()?;
             if w.shape.len() != 2 {
                 return Err(ModelError::BadShape {
                     name: w_name,
@@ -107,6 +113,15 @@ impl Mlp {
                     name: b_name,
                     shape: b.shape.clone(),
                 });
+            }
+            if let Some((previous, _)) = layers.last() {
+                let previous: &Tensor = previous;
+                if previous.shape[0] != w.shape[1] {
+                    return Err(ModelError::WidthMismatch {
+                        expected: previous.shape[0],
+                        got: w.shape[1],
+                    });
+                }
             }
             layers.push((w.clone(), b.clone()));
             i += 1;
@@ -136,6 +151,10 @@ impl Mlp {
         backend: &B,
         x: &Tensor,
     ) -> Result<Tensor, ModelError> {
+        if self.layers.is_empty() {
+            return Err(ModelError::NoLayers);
+        }
+        x.validate()?;
         let (_, in_f) = x.dims2().map_err(|_| ModelError::WidthMismatch {
             expected: self.in_features(),
             got: 0,
@@ -212,6 +231,37 @@ mod tests {
         assert!(matches!(
             m.forward(&CpuBackend, &x),
             Err(ModelError::WidthMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_disconnected_checkpoint_layers() {
+        let m = tiny_model();
+        let mut map = HashMap::new();
+        for (i, (w, b)) in m.layers.into_iter().enumerate() {
+            map.insert(format!("layers.{i}.weight"), w);
+            map.insert(format!("layers.{i}.bias"), b);
+        }
+        map.insert("layers.1.weight".into(), Tensor::zeros(vec![2, 3]));
+        assert!(matches!(
+            Mlp::from_tensors(&map),
+            Err(ModelError::WidthMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn forward_rejects_corrupt_inputs_and_empty_models() {
+        let corrupt = Tensor {
+            data: vec![1.0],
+            shape: vec![1, 2],
+        };
+        assert!(matches!(
+            tiny_model().forward(&CpuBackend, &corrupt),
+            Err(ModelError::Tensor(_))
+        ));
+        assert!(matches!(
+            Mlp { layers: Vec::new() }.forward(&CpuBackend, &corrupt),
+            Err(ModelError::NoLayers)
         ));
     }
 }

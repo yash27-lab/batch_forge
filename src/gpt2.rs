@@ -15,10 +15,20 @@ use std::collections::HashMap;
 use thiserror::Error;
 
 use crate::ops;
-use crate::tensor::Tensor;
+use crate::tensor::{Tensor, TensorError};
 
 #[derive(Error, Debug)]
 pub enum Gpt2Error {
+    #[error("tensor '{name}' has shape {found:?}; expected {expected:?}")]
+    BadShape {
+        name: String,
+        expected: Vec<usize>,
+        found: Vec<usize>,
+    },
+    #[error("invalid tensor: {0}")]
+    Tensor(#[from] TensorError),
+    #[error("invalid GPT-2 configuration: {0}")]
+    InvalidConfig(&'static str),
     #[error("missing tensor '{0}'")]
     Missing(String),
 }
@@ -48,6 +58,32 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Validates dimensions before allocating model buffers or splitting attention heads.
+    pub fn validate(&self) -> Result<(), Gpt2Error> {
+        if self.n_layer == 0
+            || self.n_head == 0
+            || self.n_embd == 0
+            || self.n_ctx == 0
+            || self.vocab_size == 0
+        {
+            return Err(Gpt2Error::InvalidConfig("all dimensions must be positive"));
+        }
+        if self.n_embd % self.n_head != 0 {
+            return Err(Gpt2Error::InvalidConfig(
+                "embedding width must be divisible by head count",
+            ));
+        }
+        if !self.eps.is_finite() || self.eps <= 0.0 {
+            return Err(Gpt2Error::InvalidConfig(
+                "normalization epsilon must be finite and positive",
+            ));
+        }
+        if self.n_embd.checked_mul(4).is_none() {
+            return Err(Gpt2Error::InvalidConfig("projection width overflows"));
+        }
+        Ok(())
+    }
+
     pub fn head_dim(&self) -> usize {
         self.n_embd / self.n_head
     }
@@ -186,10 +222,23 @@ pub struct Gpt2 {
     lnf_b: Vec<f32>,
 }
 
-fn take(map: &mut HashMap<String, Tensor>, name: &str) -> Result<Vec<f32>, Gpt2Error> {
-    map.remove(name)
-        .map(|t| t.data)
-        .ok_or_else(|| Gpt2Error::Missing(name.to_string()))
+fn take(
+    map: &mut HashMap<String, Tensor>,
+    name: &str,
+    shape: &[usize],
+) -> Result<Vec<f32>, Gpt2Error> {
+    let tensor = map
+        .remove(name)
+        .ok_or_else(|| Gpt2Error::Missing(name.to_string()))?;
+    if tensor.shape != shape {
+        return Err(Gpt2Error::BadShape {
+            name: name.to_string(),
+            expected: shape.to_vec(),
+            found: tensor.shape,
+        });
+    }
+    tensor.validate()?;
+    Ok(tensor.data)
 }
 
 impl Gpt2 {
@@ -198,26 +247,28 @@ impl Gpt2 {
         mut map: HashMap<String, Tensor>,
         config: Config,
     ) -> Result<Self, Gpt2Error> {
-        let wte = take(&mut map, "wte.weight")?;
-        let wpe = take(&mut map, "wpe.weight")?;
-        let lnf_w = take(&mut map, "ln_f.weight")?;
-        let lnf_b = take(&mut map, "ln_f.bias")?;
+        config.validate()?;
+        let d = config.n_embd;
+        let wte = take(&mut map, "wte.weight", &[config.vocab_size, d])?;
+        let wpe = take(&mut map, "wpe.weight", &[config.n_ctx, d])?;
+        let lnf_w = take(&mut map, "ln_f.weight", &[d])?;
+        let lnf_b = take(&mut map, "ln_f.bias", &[d])?;
         let mut layers = Vec::with_capacity(config.n_layer);
         for i in 0..config.n_layer {
             let p = format!("h.{i}.");
             layers.push(Layer {
-                ln1_w: take(&mut map, &format!("{p}ln_1.weight"))?,
-                ln1_b: take(&mut map, &format!("{p}ln_1.bias"))?,
-                attn_w: take(&mut map, &format!("{p}attn.c_attn.weight"))?,
-                attn_b: take(&mut map, &format!("{p}attn.c_attn.bias"))?,
-                proj_w: take(&mut map, &format!("{p}attn.c_proj.weight"))?,
-                proj_b: take(&mut map, &format!("{p}attn.c_proj.bias"))?,
-                ln2_w: take(&mut map, &format!("{p}ln_2.weight"))?,
-                ln2_b: take(&mut map, &format!("{p}ln_2.bias"))?,
-                fc_w: take(&mut map, &format!("{p}mlp.c_fc.weight"))?,
-                fc_b: take(&mut map, &format!("{p}mlp.c_fc.bias"))?,
-                fc_proj_w: take(&mut map, &format!("{p}mlp.c_proj.weight"))?,
-                fc_proj_b: take(&mut map, &format!("{p}mlp.c_proj.bias"))?,
+                ln1_w: take(&mut map, &format!("{p}ln_1.weight"), &[d])?,
+                ln1_b: take(&mut map, &format!("{p}ln_1.bias"), &[d])?,
+                attn_w: take(&mut map, &format!("{p}attn.c_attn.weight"), &[d, 3 * d])?,
+                attn_b: take(&mut map, &format!("{p}attn.c_attn.bias"), &[3 * d])?,
+                proj_w: take(&mut map, &format!("{p}attn.c_proj.weight"), &[d, d])?,
+                proj_b: take(&mut map, &format!("{p}attn.c_proj.bias"), &[d])?,
+                ln2_w: take(&mut map, &format!("{p}ln_2.weight"), &[d])?,
+                ln2_b: take(&mut map, &format!("{p}ln_2.bias"), &[d])?,
+                fc_w: take(&mut map, &format!("{p}mlp.c_fc.weight"), &[d, 4 * d])?,
+                fc_b: take(&mut map, &format!("{p}mlp.c_fc.bias"), &[4 * d])?,
+                fc_proj_w: take(&mut map, &format!("{p}mlp.c_proj.weight"), &[4 * d, d])?,
+                fc_proj_b: take(&mut map, &format!("{p}mlp.c_proj.bias"), &[d])?,
             });
         }
         Ok(Self {
@@ -234,6 +285,19 @@ impl Gpt2 {
     /// position only (`[vocab_size]`), which is all generation needs.
     pub fn forward<B: LlmOps + ?Sized>(&self, backend: &B, tokens: &[usize]) -> Vec<f32> {
         let cfg = self.config;
+        cfg.validate().expect("invalid GPT-2 configuration");
+        assert!(
+            !tokens.is_empty(),
+            "GPT-2 forward requires at least one token"
+        );
+        assert!(
+            tokens.len() <= cfg.n_ctx,
+            "token sequence exceeds GPT-2 context length"
+        );
+        assert!(
+            tokens.iter().all(|&token| token < cfg.vocab_size),
+            "token ID exceeds GPT-2 vocabulary"
+        );
         let (seq, d) = (tokens.len(), cfg.n_embd);
         let eps = cfg.eps;
 
@@ -285,6 +349,22 @@ impl Gpt2 {
         eot_token: usize,
         mut on_token: impl FnMut(usize),
     ) -> Vec<usize> {
+        self.generate_while(backend, prompt, max_new, sampler, eot_token, |token| {
+            on_token(token);
+            true
+        })
+    }
+
+    /// Generates until end-of-text, max_new, or the callback returns false.
+    pub fn generate_while<B: LlmOps + ?Sized>(
+        &self,
+        backend: &B,
+        prompt: &[usize],
+        max_new: usize,
+        sampler: &Sampler,
+        eot_token: usize,
+        mut on_token: impl FnMut(usize) -> bool,
+    ) -> Vec<usize> {
         let mut toks = prompt.to_vec();
         let n_ctx = self.config.n_ctx;
         let mut rng = Rng::new(sampler.seed);
@@ -293,8 +373,7 @@ impl Gpt2 {
             let logits = self.forward(backend, &toks[start..]);
             let next = sampler.sample(&logits, &mut rng);
             toks.push(next);
-            on_token(next);
-            if next == eot_token {
+            if !on_token(next) || next == eot_token {
                 break;
             }
         }
@@ -404,5 +483,109 @@ impl Rng {
         x ^= x << 17;
         self.0 = x;
         (x >> 40) as f32 / (1u64 << 24) as f32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_configs_fail_before_loading_weights() {
+        for config in [
+            Config {
+                n_head: 0,
+                ..Config::default()
+            },
+            Config {
+                n_embd: 7,
+                ..Config::default()
+            },
+            Config {
+                eps: f32::NAN,
+                ..Config::default()
+            },
+            Config {
+                n_ctx: 0,
+                ..Config::default()
+            },
+        ] {
+            assert!(matches!(
+                Gpt2::from_tensors(HashMap::new(), config),
+                Err(Gpt2Error::InvalidConfig(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn wrong_embedding_shape_is_rejected_at_load_time() {
+        let config = Config {
+            n_layer: 1,
+            n_head: 1,
+            n_embd: 2,
+            n_ctx: 2,
+            vocab_size: 2,
+            eps: 1e-5,
+        };
+        let mut map = HashMap::new();
+        map.insert("wte.weight".into(), Tensor::zeros(vec![1, 4]));
+        assert!(matches!(
+            Gpt2::from_tensors(map, config),
+            Err(Gpt2Error::BadShape { .. })
+        ));
+    }
+
+    fn forward_test_model() -> Gpt2 {
+        Gpt2 {
+            config: Config {
+                n_layer: 1,
+                n_head: 1,
+                n_embd: 2,
+                n_ctx: 2,
+                vocab_size: 2,
+                eps: 1e-5,
+            },
+            wte: vec![0.0; 4],
+            wpe: vec![0.0; 4],
+            layers: Vec::new(),
+            lnf_w: vec![1.0; 2],
+            lnf_b: vec![0.0; 2],
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "requires at least one token")]
+    fn empty_forward_has_a_clear_precondition() {
+        forward_test_model().forward(&crate::model::CpuBackend, &[]);
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds GPT-2 vocabulary")]
+    fn out_of_range_token_has_a_clear_precondition() {
+        forward_test_model().forward(&crate::model::CpuBackend, &[2]);
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds GPT-2 context length")]
+    fn overlong_forward_has_a_clear_precondition() {
+        forward_test_model().forward(&crate::model::CpuBackend, &[0, 0, 0]);
+    }
+
+    #[test]
+    fn generation_callback_can_stop_after_one_token() {
+        let mut calls = 0;
+        let tokens = forward_test_model().generate_while(
+            &crate::model::CpuBackend,
+            &[0],
+            10,
+            &Sampler::greedy(),
+            1,
+            |_| {
+                calls += 1;
+                false
+            },
+        );
+        assert_eq!(calls, 1);
+        assert_eq!(tokens.len(), 2);
     }
 }

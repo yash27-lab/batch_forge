@@ -81,7 +81,15 @@ This is not competing with [MLX](https://github.com/ml-explore/mlx) / [llama.cpp
 - Rust 1.75 or later
 - Apple Silicon and macOS for the Metal backend. The CPU backend builds on other platforms; use `--backend cpu` there.
 
-> **CLI status:** the current quickstart exercises exported MLP checkpoints. GPT-2 assets and prediction checks remain available through the reference test suite.
+The default binary runs exported MLP checkpoints. The separate generate binary runs GPT-2:
+
+```bash
+python python/fetch_gpt2.py
+cargo run --release --bin generate -- --backend cpu --prompt "Hello" --greedy
+cargo run --release --bin generate -- --help
+```
+
+Generation writes text to stdout and diagnostics to stderr, so text can be redirected to a file. Use `--model-dir PATH` to select another asset directory. An empty prompt starts from GPT-2's end-of-text token; an explicitly requested unavailable backend returns an error.
 
 ```bash
 # 1. Build (Apple Silicon for Metal; the CPU path builds anywhere)

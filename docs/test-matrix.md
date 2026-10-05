@@ -7,11 +7,11 @@ Use the smallest relevant check while iterating:
 | Check formatting without changing files | `cargo fmt --check` | Any supported Rust platform with `rustfmt` |
 | Check for compile errors quickly | `cargo check` | Any supported Rust platform |
 | Run lints across binaries and tests | `cargo clippy --all-targets` | Any supported Rust platform with `clippy` |
-| Validate CPU reference operations | `cargo test --lib` | Any supported Rust platform |
+| Validate CPU reference operations | `cargo test --lib --bins` | Any supported Rust platform |
 | Check Metal-to-CPU kernel parity | `cargo test --test parity -- --nocapture` | Apple Silicon macOS |
 | Check end-to-end GPT-2 predictions | `cargo test --test gpt2_e2e -- --nocapture` | Requires downloaded GPT-2 assets |
 
-Run these commands from the repository root. For a lightweight CPU-only preflight, run `cargo fmt --check`, `cargo check`, and `cargo test --lib`; add `cargo clippy --all-targets` when the Clippy component is installed.
+Run these commands from the repository root. For a lightweight CPU-only preflight, run `cargo fmt --check`, `cargo check`, and `cargo test --lib --bins`; add `cargo clippy --all-targets` when the Clippy component is installed.
 
 Before the end-to-end check, download the model weights and tokenizer:
 

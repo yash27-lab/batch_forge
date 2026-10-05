@@ -65,11 +65,7 @@ fn parse_args() -> Result<Args, String> {
                     .map_err(|_| "--requests must be an integer")?;
             }
             "--help" | "-h" => return Err("help".into()),
-            // Accepted for README compatibility; this build has no tokenizer yet.
-            "--prompt" | "-p" => {
-                let _ = args.next();
-                warn!("--prompt is accepted but ignored: no tokenizer in this build (roadmap)");
-            }
+            "--prompt" | "-p" => return Err("text prompts require the generate binary: cargo run --bin generate -- --prompt TEXT".into()),
             other => return Err(format!("unknown argument: {other}")),
         }
     }
@@ -93,7 +89,7 @@ OPTIONS:\n\
     -b, --backend WHICH   Which backend(s) to run (default: both on macOS, cpu elsewhere)\n\
     -v, --verify PATH     Reference safetensors with `input`/`output`; checks numerical parity\n\
     -r, --requests N      Run the async engine with N concurrent requests (default: 0)\n\
-    -p, --prompt TEXT     Accepted for compatibility; currently ignored\n\
+    Text generation: cargo run --bin generate -- --help\n\
     -h, --help            Show this help\n\
 \n\
 Generate a demo model with:  python python/make_demo_model.py",
@@ -119,7 +115,7 @@ fn build_input(verify: &Option<PathBuf>, in_features: usize) -> Result<Tensor, S
         if let Some(input) = map.get("input") {
             return Ok(input.clone());
         }
-        warn!("--verify file has no `input` tensor; using a synthetic input");
+        return Err("--verify file has no `input` tensor; reference verification requires the original input".into());
     }
     let data = (0..in_features).map(|i| (i as f32 * 0.01).sin()).collect();
     Tensor::new(data, vec![1, in_features]).map_err(|e| e.to_string())
@@ -159,6 +155,12 @@ async fn main() -> ExitCode {
         }
     };
 
+    #[cfg(not(target_os = "macos"))]
+    if args.backend == BackendChoice::Metal {
+        eprintln!("error: Metal requires macOS; use --backend cpu");
+        return ExitCode::FAILURE;
+    }
+
     info!("batch_forge {} starting", env!("CARGO_PKG_VERSION"));
 
     if !args.model.exists() {
@@ -168,7 +170,7 @@ async fn main() -> ExitCode {
 or export your own Equinox model:\n    python python/export_eqx.py --out model.safetensors",
             args.model.display()
         );
-        return ExitCode::SUCCESS;
+        return ExitCode::FAILURE;
     }
 
     let model = match load_model(&args.model) {
@@ -194,7 +196,14 @@ or export your own Equinox model:\n    python python/export_eqx.py --out model.s
     };
 
     // --- CPU reference forward (always available) ---
-    let cpu_out = model.forward(&CpuBackend, &input).expect("cpu forward");
+    let cpu_out = match model.forward(&CpuBackend, &input) {
+        Ok(output) => output,
+        Err(error) => {
+            error!("CPU forward failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut exit = ExitCode::SUCCESS;
     if args.backend != BackendChoice::Metal {
         info!("[cpu]   output: {}", summarize(&cpu_out));
     }
@@ -206,18 +215,28 @@ or export your own Equinox model:\n    python python/export_eqx.py --out model.s
     #[cfg(target_os = "macos")]
     if args.backend != BackendChoice::Cpu {
         if let Some(metal) = make_metal() {
-            let metal_out = model
-                .forward(metal.as_ref(), &input)
-                .expect("metal forward");
+            let metal_out = match model.forward(metal.as_ref(), &input) {
+                Ok(output) => output,
+                Err(error) => {
+                    error!("Metal forward failed: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
             info!("[metal] output: {}", summarize(&metal_out));
             let diff = cpu_out.max_abs_diff(&metal_out);
             info!("[check] CPU vs Metal max|Δ| = {diff:.3e}");
+            if !diff.is_finite() || diff > VERIFY_TOL {
+                error!("CPU/Metal parity failed (tolerance {VERIFY_TOL})");
+                exit = ExitCode::FAILURE;
+            }
             production = metal_out;
+        } else if args.backend == BackendChoice::Metal {
+            error!("requested Metal backend is unavailable");
+            return ExitCode::FAILURE;
         }
     }
 
     // --- Reference verification ---
-    let mut exit = ExitCode::SUCCESS;
     if let Some(path) = &args.verify {
         match verify_against_reference(path, &production) {
             Ok(diff) => {
@@ -240,8 +259,10 @@ or export your own Equinox model:\n    python python/export_eqx.py --out model.s
     }
 
     // --- Async engine demo ---
-    if args.requests > 0 {
-        run_async_demo(Arc::clone(&model), &input, args.requests, args.backend).await;
+    if args.requests > 0
+        && !run_async_demo(Arc::clone(&model), &input, args.requests, args.backend).await
+    {
+        exit = ExitCode::FAILURE;
     }
 
     exit
@@ -266,7 +287,12 @@ fn verify_against_reference(path: &Path, produced: &Tensor) -> Result<f32, Strin
     Ok(produced.max_abs_diff(reference))
 }
 
-async fn run_async_demo(model: Arc<Mlp>, input: &Tensor, requests: usize, choice: BackendChoice) {
+async fn run_async_demo(
+    model: Arc<Mlp>,
+    input: &Tensor,
+    requests: usize,
+    choice: BackendChoice,
+) -> bool {
     let backend: Arc<dyn Backend + Send + Sync> = pick_async_backend(choice);
     info!(
         "[engine] dispatching {requests} concurrent requests on `{}`",
@@ -294,6 +320,7 @@ async fn run_async_demo(model: Arc<Mlp>, input: &Tensor, requests: usize, choice
         "[engine] {ok}/{requests} succeeded in {:.2?} ({rps:.0} req/s)",
         elapsed
     );
+    ok == requests
 }
 
 fn pick_async_backend(choice: BackendChoice) -> Arc<dyn Backend + Send + Sync> {

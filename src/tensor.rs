@@ -8,6 +8,8 @@ pub enum TensorError {
     UnsupportedDtype(Dtype),
     #[error("Shape mismatch: expected {expected} bytes, found {found}")]
     ShapeMismatch { expected: usize, found: usize },
+    #[error("Shape mismatch: expected {expected} elements, found {found}")]
+    ElementCountMismatch { expected: usize, found: usize },
     #[error("Buffer overflow detected when computing tensor size")]
     BufferOverflow,
     #[error("Failed to allocate tensor buffer for {elements} elements")]
@@ -102,9 +104,10 @@ impl<'data> TensorView<'data> {
         if self.dtype != DataType::F32 {
             return Err(TensorError::NotF32(self.dtype));
         }
-        if self.data.len() % 4 != 0 {
+        let expected = num_bytes(&self.shape, self.dtype)?;
+        if self.data.len() != expected {
             return Err(TensorError::ShapeMismatch {
-                expected: self.numel() * 4,
+                expected,
                 found: self.data.len(),
             });
         }
@@ -121,6 +124,9 @@ impl<'data> TensorView<'data> {
 }
 
 fn checked_numel(shape: &[usize]) -> Result<usize, TensorError> {
+    if shape.contains(&0) {
+        return Ok(0);
+    }
     shape.iter().try_fold(1usize, |elements, &dim| {
         elements.checked_mul(dim).ok_or(TensorError::BufferOverflow)
     })
@@ -146,7 +152,7 @@ impl Tensor {
     pub fn new(data: Vec<f32>, shape: Vec<usize>) -> Result<Self, TensorError> {
         let expected = checked_numel(&shape)?;
         if data.len() != expected {
-            return Err(TensorError::ShapeMismatch {
+            return Err(TensorError::ElementCountMismatch {
                 expected,
                 found: data.len(),
             });
@@ -174,6 +180,18 @@ impl Tensor {
         Ok(Self { data, shape })
     }
 
+    /// Checks that the public shape and data fields still describe the same tensor.
+    pub fn validate(&self) -> Result<(), TensorError> {
+        let expected = checked_numel(&self.shape)?;
+        if self.data.len() != expected {
+            return Err(TensorError::ElementCountMismatch {
+                expected,
+                found: self.data.len(),
+            });
+        }
+        Ok(())
+    }
+
     pub fn numel(&self) -> usize {
         self.data.len()
     }
@@ -193,7 +211,11 @@ impl Tensor {
     /// Useful for parity / tolerance assertions. Returns `f32::INFINITY` on shape or
     /// data-length mismatch, or when an element-wise difference is not finite.
     pub fn max_abs_diff(&self, other: &Tensor) -> f32 {
-        if self.shape != other.shape || self.data.len() != other.data.len() {
+        if self.shape != other.shape
+            || self.data.len() != other.data.len()
+            || self.validate().is_err()
+            || other.validate().is_err()
+        {
             return f32::INFINITY;
         }
         let mut max_diff = 0.0_f32;
@@ -299,5 +321,43 @@ mod tests {
     fn test_fallible_zeros_initializes_values() {
         let tensor = Tensor::try_zeros(vec![2, 2]).unwrap();
         assert_eq!(tensor.data, vec![0.0; 4]);
+    }
+
+    #[test]
+    fn zero_dimensions_short_circuit_overflow_in_any_order() {
+        for shape in [vec![usize::MAX, 2, 0], vec![0, usize::MAX, 2]] {
+            assert!(Tensor::try_zeros(shape).unwrap().data.is_empty());
+        }
+    }
+
+    #[test]
+    fn conversion_revalidates_public_view_fields() {
+        let bytes = [0u8; 4];
+        let view = TensorView {
+            shape: vec![2],
+            dtype: DataType::F32,
+            data: &bytes,
+        };
+        assert!(matches!(
+            view.to_tensor_f32(),
+            Err(TensorError::ShapeMismatch { .. })
+        ));
+        let overflowing = TensorView {
+            shape: vec![usize::MAX, 2],
+            ..view
+        };
+        assert!(matches!(
+            overflowing.to_tensor_f32(),
+            Err(TensorError::BufferOverflow)
+        ));
+    }
+
+    #[test]
+    fn matching_corrupt_buffers_do_not_pass_parity() {
+        let corrupt = Tensor {
+            data: vec![1.0],
+            shape: vec![2],
+        };
+        assert_eq!(corrupt.max_abs_diff(&corrupt), f32::INFINITY);
     }
 }

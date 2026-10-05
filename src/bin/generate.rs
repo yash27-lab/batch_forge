@@ -6,8 +6,9 @@
 //! tokenizer, runs the transformer on the Metal backend (or CPU), and streams
 //! decoded text.
 
-use std::io::Write;
-use std::path::Path;
+use std::io::{self, Write};
+use std::path::PathBuf;
+use std::process::ExitCode;
 use std::time::Instant;
 
 use batch_forge::gpt2::{Config, Gpt2, LlmOps, Sampler};
@@ -17,7 +18,9 @@ use batch_forge::tokenizer::Tokenizer;
 const EOT: usize = 50256; // <|endoftext|>
 const MODEL_DIR: &str = "models/gpt2";
 
+#[derive(Debug)]
 struct Args {
+    model_dir: PathBuf,
     prompt: String,
     max_new: usize,
     backend: String,
@@ -26,8 +29,19 @@ struct Args {
     seed: u64,
 }
 
-fn parse_args() -> Args {
+enum Command {
+    Run(Args),
+    Help,
+    Version,
+}
+
+fn next_value(it: &mut impl Iterator<Item = String>, flag: &str) -> Result<String, String> {
+    it.next().ok_or_else(|| format!("{flag} needs a value"))
+}
+
+fn parse_args(arguments: impl IntoIterator<Item = String>) -> Result<Command, String> {
     let mut a = Args {
+        model_dir: MODEL_DIR.into(),
         prompt: "The meaning of life is".to_string(),
         max_new: 40,
         backend: if cfg!(target_os = "macos") {
@@ -40,109 +54,304 @@ fn parse_args() -> Args {
         top_k: 40,
         seed: 42,
     };
-    let mut it = std::env::args().skip(1);
+    let mut greedy = false;
+    let mut it = arguments.into_iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
-            "--prompt" | "-p" => a.prompt = it.next().unwrap_or_default(),
-            "--max-new" | "-n" => a.max_new = it.next().and_then(|s| s.parse().ok()).unwrap_or(40),
-            "--backend" | "-b" => a.backend = it.next().unwrap_or_default(),
-            "--temperature" | "-t" => {
-                a.temperature = it.next().and_then(|s| s.parse().ok()).unwrap_or(0.8)
+            "--help" | "-h" => return Ok(Command::Help),
+            "--version" | "-V" => return Ok(Command::Version),
+            "--model-dir" => {
+                let path = next_value(&mut it, &arg)?;
+                if path.is_empty() {
+                    return Err("--model-dir needs a non-empty path".into());
+                }
+                a.model_dir = path.into();
             }
-            "--top-k" | "-k" => a.top_k = it.next().and_then(|s| s.parse().ok()).unwrap_or(40),
-            "--seed" | "-s" => a.seed = it.next().and_then(|s| s.parse().ok()).unwrap_or(42),
-            "--greedy" => a.temperature = 0.0,
-            _ => {}
+            "--prompt" | "-p" => a.prompt = next_value(&mut it, &arg)?,
+            "--max-new" | "-n" => {
+                a.max_new = next_value(&mut it, &arg)?
+                    .parse()
+                    .map_err(|_| "--max-new must be a positive integer")?;
+                if a.max_new == 0 {
+                    return Err("--max-new must be positive".into());
+                }
+            }
+            "--backend" | "-b" => {
+                a.backend = next_value(&mut it, &arg)?;
+                if !matches!(a.backend.as_str(), "cpu" | "metal") {
+                    return Err("--backend must be cpu or metal".into());
+                }
+            }
+            "--temperature" | "-t" => {
+                a.temperature = next_value(&mut it, &arg)?
+                    .parse()
+                    .map_err(|_| "--temperature must be a number")?;
+                if !a.temperature.is_finite() || a.temperature < 0.0 {
+                    return Err("--temperature must be finite and non-negative".into());
+                }
+            }
+            "--top-k" | "-k" => {
+                a.top_k = next_value(&mut it, &arg)?
+                    .parse()
+                    .map_err(|_| "--top-k must be a non-negative integer")?
+            }
+            "--seed" | "-s" => {
+                a.seed = next_value(&mut it, &arg)?
+                    .parse()
+                    .map_err(|_| "--seed must be an unsigned integer")?
+            }
+            "--greedy" => greedy = true,
+            other => return Err(format!("unknown argument: {other}")),
         }
     }
-    a
+    if greedy {
+        a.temperature = 0.0;
+    }
+    Ok(Command::Run(a))
 }
 
-fn run<B: LlmOps>(backend: &B, model: &Gpt2, tok: &Tokenizer, args: &Args) {
+fn print_help() {
+    println!("GPT-2 text generation\n\nUSAGE:\n    generate [OPTIONS]\n\nOPTIONS:\n        --model-dir PATH   Directory containing all GPT-2 assets (default: models/gpt2)\n    -p, --prompt TEXT       Prompt (default: The meaning of life is)\n    -n, --max-new N         Maximum new tokens, positive integer (default: 40)\n    -b, --backend cpu|metal Compute backend (default: metal on macOS, cpu elsewhere)\n    -t, --temperature T     Finite, non-negative temperature (default: 0.8)\n    -k, --top-k K           Keep K candidates; 0 disables filtering (default: 40)\n    -s, --seed N            Sampling seed (default: 42)\n        --greedy           Force greedy sampling, regardless of option order\n    -h, --help             Show help without loading model assets\n    -V, --version          Show package version");
+}
+
+/// Emits complete UTF-8 scalars, retaining an incomplete suffix until more bytes arrive.
+fn drain_utf8(pending: &mut Vec<u8>, finish: bool) -> String {
+    let mut output = String::new();
+    let mut used = 0;
+    while used < pending.len() {
+        match std::str::from_utf8(&pending[used..]) {
+            Ok(text) => {
+                output.push_str(text);
+                used = pending.len();
+            }
+            Err(error) => {
+                let valid = error.valid_up_to();
+                output.push_str(&String::from_utf8_lossy(&pending[used..used + valid]));
+                used += valid;
+                if let Some(invalid) = error.error_len() {
+                    output.push('\u{fffd}');
+                    used += invalid;
+                } else if finish {
+                    output.push('\u{fffd}');
+                    used = pending.len();
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    pending.drain(..used);
+    output
+}
+
+fn run<B: LlmOps>(backend: &B, model: &Gpt2, tok: &Tokenizer, args: &Args) -> io::Result<()> {
     let sampler = Sampler {
         temperature: args.temperature,
         top_k: args.top_k,
         seed: args.seed,
     };
-    let prompt_ids = tok.encode(&args.prompt);
-    println!(
-        "backend={}  prompt_tokens={}  max_new={}  temp={}  top_k={}\n",
+    let mut prompt_ids = tok.encode(&args.prompt);
+    if prompt_ids.is_empty() {
+        prompt_ids.push(EOT);
+    }
+    eprintln!(
+        "backend={} prompt_tokens={} max_new={} temp={} top_k={}",
         backend.name(),
         prompt_ids.len(),
         args.max_new,
         args.temperature,
         args.top_k
     );
-
-    print!("{}", args.prompt);
-    std::io::stdout().flush().ok();
-
-    let mut generated: Vec<usize> = Vec::new();
-    let mut printed = 0usize;
+    let mut stdout = io::stdout().lock();
+    write!(stdout, "{}", args.prompt)?;
+    stdout.flush()?;
+    let mut count = 0;
+    let mut pending = Vec::new();
+    let mut write_error = None;
     let start = Instant::now();
-    model.generate(
-        backend,
-        &prompt_ids,
-        args.max_new,
-        &sampler,
-        EOT,
-        |tok_id| {
-            generated.push(tok_id);
-            // Decode the whole generated suffix and print only the new text, so
-            // multi-byte characters that span tokens render correctly.
-            let text = tok.decode(&generated);
-            if text.len() > printed {
-                print!("{}", &text[printed..]);
-                std::io::stdout().flush().ok();
-                printed = text.len();
+    model.generate_while(backend, &prompt_ids, args.max_new, &sampler, EOT, |token| {
+        count += 1;
+        if token == EOT {
+            return true;
+        }
+        pending.extend(tok.decode_bytes(&[token]));
+        let text = drain_utf8(&mut pending, false);
+        if !text.is_empty() {
+            if let Err(error) = write!(stdout, "{text}").and_then(|_| stdout.flush()) {
+                write_error = Some(error);
+                return false;
             }
-        },
-    );
+        }
+        true
+    });
+    if let Some(error) = write_error {
+        return Err(error);
+    }
+    writeln!(stdout, "{}", drain_utf8(&mut pending, true))?;
+    stdout.flush()?;
     let elapsed = start.elapsed();
-
-    let n = generated.len().max(1);
-    println!(
-        "\n\n[{} tokens in {:.2?}  =  {:.1} tok/s on {}]",
-        generated.len(),
-        elapsed,
-        generated.len() as f64 / elapsed.as_secs_f64(),
-        backend.name(),
+    let rate = count as f64 / elapsed.as_secs_f64().max(f64::MIN_POSITIVE);
+    eprintln!(
+        "[{count} tokens in {elapsed:.2?} = {rate:.1} tok/s on {}]",
+        backend.name()
     );
-    let _ = n;
+    Ok(())
 }
 
-fn main() {
-    let args = parse_args();
-    let model_path = Path::new(MODEL_DIR).join("model.safetensors");
-    if !model_path.exists() {
-        eprintln!(
-            "GPT-2 weights not found at {}.\nDownload them with:\n  \
-             python python/fetch_gpt2.py    (or)\n  \
-             curl -L https://huggingface.co/openai-community/gpt2/resolve/main/model.safetensors -o {}",
-            model_path.display(),
-            model_path.display()
-        );
-        std::process::exit(1);
+fn output_result(result: io::Result<()>) -> Result<(), String> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+        Err(error) => Err(format!("write generated text: {error}")),
     }
+}
 
+fn main() -> ExitCode {
+    let args = match parse_args(std::env::args().skip(1)) {
+        Ok(Command::Help) => {
+            print_help();
+            return ExitCode::SUCCESS;
+        }
+        Ok(Command::Version) => {
+            println!("{}", env!("CARGO_PKG_VERSION"));
+            return ExitCode::SUCCESS;
+        }
+        Ok(Command::Run(args)) => args,
+        Err(error) => {
+            eprintln!("error: {error}\nUse --help for usage.");
+            return ExitCode::from(2);
+        }
+    };
+    match execute(&args) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("error: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn execute(args: &Args) -> Result<(), String> {
+    #[cfg(not(target_os = "macos"))]
+    if args.backend == "metal" {
+        return Err("the Metal backend requires macOS; use --backend cpu".into());
+    }
+    let model_path = args.model_dir.join("model.safetensors");
+    if !model_path.is_file() {
+        return Err(format!("GPT-2 weights not found at {}. Download with python python/fetch_gpt2.py, or use --model-dir to locate your assets.", model_path.display()));
+    }
     eprintln!("loading GPT-2 weights …");
-    let tensors = loader::load_safetensors(&model_path).expect("load weights");
-    let model = Gpt2::from_tensors(tensors, Config::default()).expect("build model");
+    let tensors = loader::load_safetensors(&model_path)
+        .map_err(|e| format!("load {}: {e}", model_path.display()))?;
+    let model =
+        Gpt2::from_tensors(tensors, Config::default()).map_err(|e| format!("build GPT-2: {e}"))?;
     let tok = Tokenizer::from_files(
-        &Path::new(MODEL_DIR).join("vocab.json"),
-        &Path::new(MODEL_DIR).join("merges.txt"),
+        &args.model_dir.join("vocab.json"),
+        &args.model_dir.join("merges.txt"),
     )
-    .expect("load tokenizer");
+    .map_err(|e| format!("load tokenizer from {}: {e}", args.model_dir.display()))?;
+    if tok.vocab_size() != model.config.vocab_size {
+        return Err(format!(
+            "tokenizer has {} tokens, but model expects {}",
+            tok.vocab_size(),
+            model.config.vocab_size
+        ));
+    }
 
     #[cfg(target_os = "macos")]
     if args.backend == "metal" {
-        match batch_forge::metal_backend::MetalBackend::new(batch_forge::SHADER_SOURCE) {
-            Ok(m) => {
-                run(&m, &model, &tok, &args);
-                return;
-            }
-            Err(e) => eprintln!("Metal unavailable ({e}); using CPU"),
+        let metal = batch_forge::metal_backend::MetalBackend::new(batch_forge::SHADER_SOURCE)
+            .map_err(|e| format!("initialize Metal: {e}"))?;
+        return output_result(run(&metal, &model, &tok, args));
+    }
+    output_result(run(&batch_forge::model::CpuBackend, &model, &tok, args))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(flags: &[&str]) -> Result<Command, String> {
+        parse_args(flags.iter().map(|s| s.to_string()))
+    }
+
+    #[test]
+    fn rejects_invalid_flags_values_and_missing_values() {
+        for args in [
+            vec!["--bogus"],
+            vec!["--seed"],
+            vec!["--max-new", "no"],
+            vec!["--max-new", "0"],
+            vec!["--backend", "cuda"],
+            vec!["--temperature", "NaN"],
+            vec!["--temperature", "inf"],
+            vec!["--temperature", "-1"],
+            vec!["--top-k", "-2"],
+        ] {
+            assert!(parse(&args).is_err(), "{args:?}");
         }
     }
-    run(&batch_forge::model::CpuBackend, &model, &tok, &args);
+
+    #[test]
+    fn greedy_order_and_zero_sampling_values_are_explicit() {
+        for flags in [
+            vec![
+                "--greedy",
+                "--temperature",
+                "1",
+                "--top-k",
+                "0",
+                "--seed",
+                "0",
+            ],
+            vec![
+                "--temperature",
+                "1",
+                "--greedy",
+                "--top-k",
+                "0",
+                "--seed",
+                "0",
+            ],
+        ] {
+            let Command::Run(args) = parse(&flags).unwrap() else {
+                panic!("expected run");
+            };
+            assert_eq!(args.temperature, 0.0);
+            assert_eq!(args.top_k, 0);
+            assert_eq!(args.seed, 0);
+        }
+        assert!(matches!(parse(&["--help"]), Ok(Command::Help)));
+        assert!(matches!(parse(&["--version"]), Ok(Command::Version)));
+    }
+
+    #[test]
+    fn model_directory_override_is_preserved() {
+        let Command::Run(args) = parse(&["--model-dir", "/tmp/weights"]).unwrap() else {
+            panic!("expected run");
+        };
+        assert_eq!(args.model_dir, PathBuf::from("/tmp/weights"));
+        assert!(parse(&["--model-dir", ""]).is_err());
+    }
+
+    #[test]
+    fn utf8_scalar_split_over_three_tokens_streams_once() {
+        let mut pending = vec![0xe2];
+        assert_eq!(drain_utf8(&mut pending, false), "");
+        pending.push(0x82);
+        assert_eq!(drain_utf8(&mut pending, false), "");
+        pending.push(0xac);
+        assert_eq!(drain_utf8(&mut pending, false), "€");
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn invalid_and_unfinished_utf8_have_predictable_replacement() {
+        let mut pending = vec![b'a', 0xff, 0xe2];
+        assert_eq!(drain_utf8(&mut pending, false), "a\u{fffd}");
+        assert_eq!(drain_utf8(&mut pending, true), "\u{fffd}");
+        assert!(pending.is_empty());
+        assert!(output_result(Err(io::Error::from(io::ErrorKind::BrokenPipe))).is_ok());
+        assert!(output_result(Err(io::Error::from(io::ErrorKind::PermissionDenied))).is_err());
+    }
 }
