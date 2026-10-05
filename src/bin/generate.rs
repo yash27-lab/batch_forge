@@ -97,7 +97,10 @@ fn run<B: LlmOps>(backend: &B, model: &Gpt2, tok: &Tokenizer, args: &Args) {
         top_k: args.top_k,
         seed: args.seed,
     };
-    let prompt_ids = tok.encode(&args.prompt);
+    let mut prompt_ids = tok.encode(&args.prompt);
+    if prompt_ids.is_empty() {
+        prompt_ids.push(EOT);
+    }
     println!(
         "backend={}  prompt_tokens={}  max_new={}  temp={}  top_k={}\n",
         backend.name(),
