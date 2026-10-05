@@ -146,6 +146,10 @@ impl Mlp {
         backend: &B,
         x: &Tensor,
     ) -> Result<Tensor, ModelError> {
+        if self.layers.is_empty() {
+            return Err(ModelError::NoLayers);
+        }
+        x.validate()?;
         let (_, in_f) = x.dims2().map_err(|_| ModelError::WidthMismatch {
             expected: self.in_features(),
             got: 0,
@@ -235,5 +239,12 @@ mod tests {
         }
         map.insert("layers.1.weight".into(), Tensor::zeros(vec![2, 3]));
         assert!(matches!(Mlp::from_tensors(&map), Err(ModelError::WidthMismatch { .. })));
+    }
+
+    #[test]
+    fn forward_rejects_corrupt_inputs_and_empty_models() {
+        let corrupt = Tensor { data: vec![1.0], shape: vec![1, 2] };
+        assert!(matches!(tiny_model().forward(&CpuBackend, &corrupt), Err(ModelError::Tensor(_))));
+        assert!(matches!(Mlp { layers: Vec::new() }.forward(&CpuBackend, &corrupt), Err(ModelError::NoLayers)));
     }
 }
