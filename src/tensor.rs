@@ -178,6 +178,15 @@ impl Tensor {
         Ok(Self { data, shape })
     }
 
+    /// Checks that the public shape and data fields still describe the same tensor.
+    pub fn validate(&self) -> Result<(), TensorError> {
+        let expected = checked_numel(&self.shape)?;
+        if self.data.len() != expected {
+            return Err(TensorError::ShapeMismatch { expected, found: self.data.len() });
+        }
+        Ok(())
+    }
+
     pub fn numel(&self) -> usize {
         self.data.len()
     }
@@ -197,7 +206,11 @@ impl Tensor {
     /// Useful for parity / tolerance assertions. Returns `f32::INFINITY` on shape or
     /// data-length mismatch, or when an element-wise difference is not finite.
     pub fn max_abs_diff(&self, other: &Tensor) -> f32 {
-        if self.shape != other.shape || self.data.len() != other.data.len() {
+        if self.shape != other.shape
+            || self.data.len() != other.data.len()
+            || self.validate().is_err()
+            || other.validate().is_err()
+        {
             return f32::INFINITY;
         }
         let mut max_diff = 0.0_f32;
@@ -319,5 +332,11 @@ mod tests {
         assert!(matches!(view.to_tensor_f32(), Err(TensorError::ShapeMismatch { .. })));
         let overflowing = TensorView { shape: vec![usize::MAX, 2], ..view };
         assert!(matches!(overflowing.to_tensor_f32(), Err(TensorError::BufferOverflow)));
+    }
+
+    #[test]
+    fn matching_corrupt_buffers_do_not_pass_parity() {
+        let corrupt = Tensor { data: vec![1.0], shape: vec![2] };
+        assert_eq!(corrupt.max_abs_diff(&corrupt), f32::INFINITY);
     }
 }
