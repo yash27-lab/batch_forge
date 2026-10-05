@@ -93,7 +93,20 @@ impl Submitter {
                 response_tx,
             })
             .await
-            .expect("engine receiver dropped");
-        response_rx.await.expect("engine dropped response channel")
+            .map_err(|_| ModelError::EngineClosed)?;
+        response_rx.await.map_err(|_| ModelError::EngineClosed)?
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn closed_engine_returns_an_error() {
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx);
+        let result = Submitter { tx }.infer(0, Tensor::zeros(vec![1, 1])).await;
+        assert!(matches!(result, Err(ModelError::EngineClosed)));
     }
 }

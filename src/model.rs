@@ -13,6 +13,8 @@ use crate::tensor::{Tensor, TensorError};
 
 #[derive(Error, Debug)]
 pub enum ModelError {
+    #[error("inference engine closed before returning a result")]
+    EngineClosed,
     #[error("invalid tensor: {0}")]
     Tensor(#[from] TensorError),
     #[error("missing tensor '{0}' in checkpoint")]
