@@ -262,6 +262,10 @@ impl Gpt2 {
     /// position only (`[vocab_size]`), which is all generation needs.
     pub fn forward<B: LlmOps + ?Sized>(&self, backend: &B, tokens: &[usize]) -> Vec<f32> {
         let cfg = self.config;
+        cfg.validate().expect("invalid GPT-2 configuration");
+        assert!(!tokens.is_empty(), "GPT-2 forward requires at least one token");
+        assert!(tokens.len() <= cfg.n_ctx, "token sequence exceeds GPT-2 context length");
+        assert!(tokens.iter().all(|&token| token < cfg.vocab_size), "token ID exceeds GPT-2 vocabulary");
         let (seq, d) = (tokens.len(), cfg.n_embd);
         let eps = cfg.eps;
 
@@ -457,5 +461,30 @@ mod tests {
         let mut map = HashMap::new();
         map.insert("wte.weight".into(), Tensor::zeros(vec![1, 4]));
         assert!(matches!(Gpt2::from_tensors(map, config), Err(Gpt2Error::BadShape { .. })));
+    }
+
+    fn forward_test_model() -> Gpt2 {
+        Gpt2 {
+            config: Config { n_layer: 1, n_head: 1, n_embd: 2, n_ctx: 2, vocab_size: 2, eps: 1e-5 },
+            wte: vec![0.0; 4], wpe: vec![0.0; 4], layers: Vec::new(), lnf_w: vec![1.0; 2], lnf_b: vec![0.0; 2],
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "requires at least one token")]
+    fn empty_forward_has_a_clear_precondition() {
+        forward_test_model().forward(&crate::model::CpuBackend, &[]);
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds GPT-2 vocabulary")]
+    fn out_of_range_token_has_a_clear_precondition() {
+        forward_test_model().forward(&crate::model::CpuBackend, &[2]);
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds GPT-2 context length")]
+    fn overlong_forward_has_a_clear_precondition() {
+        forward_test_model().forward(&crate::model::CpuBackend, &[0, 0, 0]);
     }
 }
