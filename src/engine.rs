@@ -68,13 +68,13 @@ impl RequestManager {
 
 /// Convenience: spin up a manager on the current runtime and return a handle for
 /// submitting requests. The manager stops when the returned `Submitter` (and all
-/// its clones) are dropped.
+/// its clones) are dropped. A zero queue depth is normalized to one slot.
 pub fn spawn(
     backend: Arc<dyn Backend + Send + Sync>,
     model: Arc<Mlp>,
     queue_depth: usize,
 ) -> Submitter {
-    let (tx, rx) = mpsc::channel(queue_depth);
+    let (tx, rx) = mpsc::channel(queue_depth.max(1));
     let manager = RequestManager::new(backend, model, rx);
     tokio::spawn(manager.run());
     Submitter { tx }
@@ -112,5 +112,13 @@ mod tests {
         drop(rx);
         let result = Submitter { tx }.infer(0, Tensor::zeros(vec![1, 1])).await;
         assert!(matches!(result, Err(ModelError::EngineClosed)));
+    }
+
+    #[tokio::test]
+    async fn zero_queue_depth_still_accepts_a_request() {
+        let model = Mlp { layers: vec![(Tensor::new(vec![2.0], vec![1, 1]).unwrap(), Tensor::zeros(vec![1]))] };
+        let submitter = spawn(Arc::new(crate::model::CpuBackend), Arc::new(model), 0);
+        let out = submitter.infer(0, Tensor::new(vec![3.0], vec![1, 1]).unwrap()).await.unwrap();
+        assert_eq!(out.data, vec![6.0]);
     }
 }
