@@ -7,7 +7,7 @@
 //! decoded text.
 
 use std::io::Write;
-use std::path::Path;
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Instant;
 
@@ -20,6 +20,7 @@ const MODEL_DIR: &str = "models/gpt2";
 
 #[derive(Debug)]
 struct Args {
+    model_dir: PathBuf,
     prompt: String,
     max_new: usize,
     backend: String,
@@ -40,6 +41,7 @@ fn next_value(it: &mut impl Iterator<Item = String>, flag: &str) -> Result<Strin
 
 fn parse_args(arguments: impl IntoIterator<Item = String>) -> Result<Command, String> {
     let mut a = Args {
+        model_dir: MODEL_DIR.into(),
         prompt: "The meaning of life is".to_string(),
         max_new: 40,
         backend: if cfg!(target_os = "macos") { "metal" } else { "cpu" }.to_string(),
@@ -53,6 +55,11 @@ fn parse_args(arguments: impl IntoIterator<Item = String>) -> Result<Command, St
         match arg.as_str() {
             "--help" | "-h" => return Ok(Command::Help),
             "--version" | "-V" => return Ok(Command::Version),
+            "--model-dir" => {
+                let path = next_value(&mut it, &arg)?;
+                if path.is_empty() { return Err("--model-dir needs a non-empty path".into()); }
+                a.model_dir = path.into();
+            }
             "--prompt" | "-p" => a.prompt = next_value(&mut it, &arg)?,
             "--max-new" | "-n" => {
                 a.max_new = next_value(&mut it, &arg)?.parse().map_err(|_| "--max-new must be a positive integer")?;
@@ -81,7 +88,7 @@ fn parse_args(arguments: impl IntoIterator<Item = String>) -> Result<Command, St
 }
 
 fn print_help() {
-    println!("GPT-2 text generation\n\nUSAGE:\n    generate [OPTIONS]\n\nOPTIONS:\n    -p, --prompt TEXT       Prompt (default: The meaning of life is)\n    -n, --max-new N         Maximum new tokens, positive integer (default: 40)\n    -b, --backend cpu|metal Compute backend (default: metal on macOS, cpu elsewhere)\n    -t, --temperature T     Finite, non-negative temperature (default: 0.8)\n    -k, --top-k K           Keep K candidates; 0 disables filtering (default: 40)\n    -s, --seed N            Sampling seed (default: 42)\n        --greedy           Force greedy sampling, regardless of option order\n    -h, --help             Show help without loading model assets\n    -V, --version          Show package version");
+    println!("GPT-2 text generation\n\nUSAGE:\n    generate [OPTIONS]\n\nOPTIONS:\n        --model-dir PATH   Directory containing all GPT-2 assets (default: models/gpt2)\n    -p, --prompt TEXT       Prompt (default: The meaning of life is)\n    -n, --max-new N         Maximum new tokens, positive integer (default: 40)\n    -b, --backend cpu|metal Compute backend (default: metal on macOS, cpu elsewhere)\n    -t, --temperature T     Finite, non-negative temperature (default: 0.8)\n    -k, --top-k K           Keep K candidates; 0 disables filtering (default: 40)\n    -s, --seed N            Sampling seed (default: 42)\n        --greedy           Force greedy sampling, regardless of option order\n    -h, --help             Show help without loading model assets\n    -V, --version          Show package version");
 }
 
 fn run<B: LlmOps>(backend: &B, model: &Gpt2, tok: &Tokenizer, args: &Args) {
@@ -144,7 +151,7 @@ fn main() -> ExitCode {
         Ok(Command::Run(args)) => args,
         Err(error) => { eprintln!("error: {error}\nUse --help for usage."); return ExitCode::from(2); }
     };
-    let model_path = Path::new(MODEL_DIR).join("model.safetensors");
+    let model_path = args.model_dir.join("model.safetensors");
     if !model_path.exists() {
         eprintln!(
             "GPT-2 weights not found at {}.\nDownload them with:\n  \
@@ -160,8 +167,8 @@ fn main() -> ExitCode {
     let tensors = loader::load_safetensors(&model_path).expect("load weights");
     let model = Gpt2::from_tensors(tensors, Config::default()).expect("build model");
     let tok = Tokenizer::from_files(
-        &Path::new(MODEL_DIR).join("vocab.json"),
-        &Path::new(MODEL_DIR).join("merges.txt"),
+        &args.model_dir.join("vocab.json"),
+        &args.model_dir.join("merges.txt"),
     )
     .expect("load tokenizer");
 
@@ -212,5 +219,12 @@ mod tests {
         }
         assert!(matches!(parse(&["--help"]), Ok(Command::Help)));
         assert!(matches!(parse(&["--version"]), Ok(Command::Version)));
+    }
+
+    #[test]
+    fn model_directory_override_is_preserved() {
+        let Command::Run(args) = parse(&["--model-dir", "/tmp/weights"]).unwrap() else { panic!("expected run"); };
+        assert_eq!(args.model_dir, PathBuf::from("/tmp/weights"));
+        assert!(parse(&["--model-dir", ""]).is_err());
     }
 }
