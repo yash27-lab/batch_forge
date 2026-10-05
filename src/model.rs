@@ -117,7 +117,10 @@ impl Mlp {
             if let Some((previous, _)) = layers.last() {
                 let previous: &Tensor = previous;
                 if previous.shape[0] != w.shape[1] {
-                    return Err(ModelError::WidthMismatch { expected: previous.shape[0], got: w.shape[1] });
+                    return Err(ModelError::WidthMismatch {
+                        expected: previous.shape[0],
+                        got: w.shape[1],
+                    });
                 }
             }
             layers.push((w.clone(), b.clone()));
@@ -240,13 +243,25 @@ mod tests {
             map.insert(format!("layers.{i}.bias"), b);
         }
         map.insert("layers.1.weight".into(), Tensor::zeros(vec![2, 3]));
-        assert!(matches!(Mlp::from_tensors(&map), Err(ModelError::WidthMismatch { .. })));
+        assert!(matches!(
+            Mlp::from_tensors(&map),
+            Err(ModelError::WidthMismatch { .. })
+        ));
     }
 
     #[test]
     fn forward_rejects_corrupt_inputs_and_empty_models() {
-        let corrupt = Tensor { data: vec![1.0], shape: vec![1, 2] };
-        assert!(matches!(tiny_model().forward(&CpuBackend, &corrupt), Err(ModelError::Tensor(_))));
-        assert!(matches!(Mlp { layers: Vec::new() }.forward(&CpuBackend, &corrupt), Err(ModelError::NoLayers)));
+        let corrupt = Tensor {
+            data: vec![1.0],
+            shape: vec![1, 2],
+        };
+        assert!(matches!(
+            tiny_model().forward(&CpuBackend, &corrupt),
+            Err(ModelError::Tensor(_))
+        ));
+        assert!(matches!(
+            Mlp { layers: Vec::new() }.forward(&CpuBackend, &corrupt),
+            Err(ModelError::NoLayers)
+        ));
     }
 }

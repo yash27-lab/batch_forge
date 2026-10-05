@@ -44,7 +44,12 @@ fn parse_args(arguments: impl IntoIterator<Item = String>) -> Result<Command, St
         model_dir: MODEL_DIR.into(),
         prompt: "The meaning of life is".to_string(),
         max_new: 40,
-        backend: if cfg!(target_os = "macos") { "metal" } else { "cpu" }.to_string(),
+        backend: if cfg!(target_os = "macos") {
+            "metal"
+        } else {
+            "cpu"
+        }
+        .to_string(),
         temperature: 0.8,
         top_k: 40,
         seed: 42,
@@ -57,13 +62,19 @@ fn parse_args(arguments: impl IntoIterator<Item = String>) -> Result<Command, St
             "--version" | "-V" => return Ok(Command::Version),
             "--model-dir" => {
                 let path = next_value(&mut it, &arg)?;
-                if path.is_empty() { return Err("--model-dir needs a non-empty path".into()); }
+                if path.is_empty() {
+                    return Err("--model-dir needs a non-empty path".into());
+                }
                 a.model_dir = path.into();
             }
             "--prompt" | "-p" => a.prompt = next_value(&mut it, &arg)?,
             "--max-new" | "-n" => {
-                a.max_new = next_value(&mut it, &arg)?.parse().map_err(|_| "--max-new must be a positive integer")?;
-                if a.max_new == 0 { return Err("--max-new must be positive".into()); }
+                a.max_new = next_value(&mut it, &arg)?
+                    .parse()
+                    .map_err(|_| "--max-new must be a positive integer")?;
+                if a.max_new == 0 {
+                    return Err("--max-new must be positive".into());
+                }
             }
             "--backend" | "-b" => {
                 a.backend = next_value(&mut it, &arg)?;
@@ -72,18 +83,30 @@ fn parse_args(arguments: impl IntoIterator<Item = String>) -> Result<Command, St
                 }
             }
             "--temperature" | "-t" => {
-                a.temperature = next_value(&mut it, &arg)?.parse().map_err(|_| "--temperature must be a number")?;
+                a.temperature = next_value(&mut it, &arg)?
+                    .parse()
+                    .map_err(|_| "--temperature must be a number")?;
                 if !a.temperature.is_finite() || a.temperature < 0.0 {
                     return Err("--temperature must be finite and non-negative".into());
                 }
             }
-            "--top-k" | "-k" => a.top_k = next_value(&mut it, &arg)?.parse().map_err(|_| "--top-k must be a non-negative integer")?,
-            "--seed" | "-s" => a.seed = next_value(&mut it, &arg)?.parse().map_err(|_| "--seed must be an unsigned integer")?,
+            "--top-k" | "-k" => {
+                a.top_k = next_value(&mut it, &arg)?
+                    .parse()
+                    .map_err(|_| "--top-k must be a non-negative integer")?
+            }
+            "--seed" | "-s" => {
+                a.seed = next_value(&mut it, &arg)?
+                    .parse()
+                    .map_err(|_| "--seed must be an unsigned integer")?
+            }
             "--greedy" => greedy = true,
             other => return Err(format!("unknown argument: {other}")),
         }
     }
-    if greedy { a.temperature = 0.0; }
+    if greedy {
+        a.temperature = 0.0;
+    }
     Ok(Command::Run(a))
 }
 
@@ -97,7 +120,10 @@ fn drain_utf8(pending: &mut Vec<u8>, finish: bool) -> String {
     let mut used = 0;
     while used < pending.len() {
         match std::str::from_utf8(&pending[used..]) {
-            Ok(text) => { output.push_str(text); used = pending.len(); }
+            Ok(text) => {
+                output.push_str(text);
+                used = pending.len();
+            }
             Err(error) => {
                 let valid = error.valid_up_to();
                 output.push_str(&String::from_utf8_lossy(&pending[used..used + valid]));
@@ -119,10 +145,23 @@ fn drain_utf8(pending: &mut Vec<u8>, finish: bool) -> String {
 }
 
 fn run<B: LlmOps>(backend: &B, model: &Gpt2, tok: &Tokenizer, args: &Args) -> io::Result<()> {
-    let sampler = Sampler { temperature: args.temperature, top_k: args.top_k, seed: args.seed };
+    let sampler = Sampler {
+        temperature: args.temperature,
+        top_k: args.top_k,
+        seed: args.seed,
+    };
     let mut prompt_ids = tok.encode(&args.prompt);
-    if prompt_ids.is_empty() { prompt_ids.push(EOT); }
-    eprintln!("backend={} prompt_tokens={} max_new={} temp={} top_k={}", backend.name(), prompt_ids.len(), args.max_new, args.temperature, args.top_k);
+    if prompt_ids.is_empty() {
+        prompt_ids.push(EOT);
+    }
+    eprintln!(
+        "backend={} prompt_tokens={} max_new={} temp={} top_k={}",
+        backend.name(),
+        prompt_ids.len(),
+        args.max_new,
+        args.temperature,
+        args.top_k
+    );
     let mut stdout = io::stdout().lock();
     write!(stdout, "{}", args.prompt)?;
     stdout.flush()?;
@@ -132,7 +171,9 @@ fn run<B: LlmOps>(backend: &B, model: &Gpt2, tok: &Tokenizer, args: &Args) -> io
     let start = Instant::now();
     model.generate_while(backend, &prompt_ids, args.max_new, &sampler, EOT, |token| {
         count += 1;
-        if token == EOT { return true; }
+        if token == EOT {
+            return true;
+        }
         pending.extend(tok.decode_bytes(&[token]));
         let text = drain_utf8(&mut pending, false);
         if !text.is_empty() {
@@ -143,12 +184,17 @@ fn run<B: LlmOps>(backend: &B, model: &Gpt2, tok: &Tokenizer, args: &Args) -> io
         }
         true
     });
-    if let Some(error) = write_error { return Err(error); }
+    if let Some(error) = write_error {
+        return Err(error);
+    }
     writeln!(stdout, "{}", drain_utf8(&mut pending, true))?;
     stdout.flush()?;
     let elapsed = start.elapsed();
     let rate = count as f64 / elapsed.as_secs_f64().max(f64::MIN_POSITIVE);
-    eprintln!("[{count} tokens in {elapsed:.2?} = {rate:.1} tok/s on {}]", backend.name());
+    eprintln!(
+        "[{count} tokens in {elapsed:.2?} = {rate:.1} tok/s on {}]",
+        backend.name()
+    );
     Ok(())
 }
 
@@ -162,14 +208,26 @@ fn output_result(result: io::Result<()>) -> Result<(), String> {
 
 fn main() -> ExitCode {
     let args = match parse_args(std::env::args().skip(1)) {
-        Ok(Command::Help) => { print_help(); return ExitCode::SUCCESS; }
-        Ok(Command::Version) => { println!("{}", env!("CARGO_PKG_VERSION")); return ExitCode::SUCCESS; }
+        Ok(Command::Help) => {
+            print_help();
+            return ExitCode::SUCCESS;
+        }
+        Ok(Command::Version) => {
+            println!("{}", env!("CARGO_PKG_VERSION"));
+            return ExitCode::SUCCESS;
+        }
         Ok(Command::Run(args)) => args,
-        Err(error) => { eprintln!("error: {error}\nUse --help for usage."); return ExitCode::from(2); }
+        Err(error) => {
+            eprintln!("error: {error}\nUse --help for usage.");
+            return ExitCode::from(2);
+        }
     };
     match execute(&args) {
         Ok(()) => ExitCode::SUCCESS,
-        Err(error) => { eprintln!("error: {error}"); ExitCode::FAILURE }
+        Err(error) => {
+            eprintln!("error: {error}");
+            ExitCode::FAILURE
+        }
     }
 }
 
@@ -183,14 +241,21 @@ fn execute(args: &Args) -> Result<(), String> {
         return Err(format!("GPT-2 weights not found at {}. Download with python python/fetch_gpt2.py, or use --model-dir to locate your assets.", model_path.display()));
     }
     eprintln!("loading GPT-2 weights …");
-    let tensors = loader::load_safetensors(&model_path).map_err(|e| format!("load {}: {e}", model_path.display()))?;
-    let model = Gpt2::from_tensors(tensors, Config::default()).map_err(|e| format!("build GPT-2: {e}"))?;
+    let tensors = loader::load_safetensors(&model_path)
+        .map_err(|e| format!("load {}: {e}", model_path.display()))?;
+    let model =
+        Gpt2::from_tensors(tensors, Config::default()).map_err(|e| format!("build GPT-2: {e}"))?;
     let tok = Tokenizer::from_files(
         &args.model_dir.join("vocab.json"),
         &args.model_dir.join("merges.txt"),
-    ).map_err(|e| format!("load tokenizer from {}: {e}", args.model_dir.display()))?;
+    )
+    .map_err(|e| format!("load tokenizer from {}: {e}", args.model_dir.display()))?;
     if tok.vocab_size() != model.config.vocab_size {
-        return Err(format!("tokenizer has {} tokens, but model expects {}", tok.vocab_size(), model.config.vocab_size));
+        return Err(format!(
+            "tokenizer has {} tokens, but model expects {}",
+            tok.vocab_size(),
+            model.config.vocab_size
+        ));
     }
 
     #[cfg(target_os = "macos")]
@@ -213,10 +278,15 @@ mod tests {
     #[test]
     fn rejects_invalid_flags_values_and_missing_values() {
         for args in [
-            vec!["--bogus"], vec!["--seed"], vec!["--max-new", "no"],
-            vec!["--max-new", "0"], vec!["--backend", "cuda"],
-            vec!["--temperature", "NaN"], vec!["--temperature", "inf"],
-            vec!["--temperature", "-1"], vec!["--top-k", "-2"],
+            vec!["--bogus"],
+            vec!["--seed"],
+            vec!["--max-new", "no"],
+            vec!["--max-new", "0"],
+            vec!["--backend", "cuda"],
+            vec!["--temperature", "NaN"],
+            vec!["--temperature", "inf"],
+            vec!["--temperature", "-1"],
+            vec!["--top-k", "-2"],
         ] {
             assert!(parse(&args).is_err(), "{args:?}");
         }
@@ -225,10 +295,28 @@ mod tests {
     #[test]
     fn greedy_order_and_zero_sampling_values_are_explicit() {
         for flags in [
-            vec!["--greedy", "--temperature", "1", "--top-k", "0", "--seed", "0"],
-            vec!["--temperature", "1", "--greedy", "--top-k", "0", "--seed", "0"],
+            vec![
+                "--greedy",
+                "--temperature",
+                "1",
+                "--top-k",
+                "0",
+                "--seed",
+                "0",
+            ],
+            vec![
+                "--temperature",
+                "1",
+                "--greedy",
+                "--top-k",
+                "0",
+                "--seed",
+                "0",
+            ],
         ] {
-            let Command::Run(args) = parse(&flags).unwrap() else { panic!("expected run"); };
+            let Command::Run(args) = parse(&flags).unwrap() else {
+                panic!("expected run");
+            };
             assert_eq!(args.temperature, 0.0);
             assert_eq!(args.top_k, 0);
             assert_eq!(args.seed, 0);
@@ -239,7 +327,9 @@ mod tests {
 
     #[test]
     fn model_directory_override_is_preserved() {
-        let Command::Run(args) = parse(&["--model-dir", "/tmp/weights"]).unwrap() else { panic!("expected run"); };
+        let Command::Run(args) = parse(&["--model-dir", "/tmp/weights"]).unwrap() else {
+            panic!("expected run");
+        };
         assert_eq!(args.model_dir, PathBuf::from("/tmp/weights"));
         assert!(parse(&["--model-dir", ""]).is_err());
     }

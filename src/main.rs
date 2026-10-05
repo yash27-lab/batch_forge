@@ -198,7 +198,10 @@ or export your own Equinox model:\n    python python/export_eqx.py --out model.s
     // --- CPU reference forward (always available) ---
     let cpu_out = match model.forward(&CpuBackend, &input) {
         Ok(output) => output,
-        Err(error) => { error!("CPU forward failed: {error}"); return ExitCode::FAILURE; }
+        Err(error) => {
+            error!("CPU forward failed: {error}");
+            return ExitCode::FAILURE;
+        }
     };
     let mut exit = ExitCode::SUCCESS;
     if args.backend != BackendChoice::Metal {
@@ -214,7 +217,10 @@ or export your own Equinox model:\n    python python/export_eqx.py --out model.s
         if let Some(metal) = make_metal() {
             let metal_out = match model.forward(metal.as_ref(), &input) {
                 Ok(output) => output,
-                Err(error) => { error!("Metal forward failed: {error}"); return ExitCode::FAILURE; }
+                Err(error) => {
+                    error!("Metal forward failed: {error}");
+                    return ExitCode::FAILURE;
+                }
             };
             info!("[metal] output: {}", summarize(&metal_out));
             let diff = cpu_out.max_abs_diff(&metal_out);
@@ -281,7 +287,12 @@ fn verify_against_reference(path: &Path, produced: &Tensor) -> Result<f32, Strin
     Ok(produced.max_abs_diff(reference))
 }
 
-async fn run_async_demo(model: Arc<Mlp>, input: &Tensor, requests: usize, choice: BackendChoice) -> bool {
+async fn run_async_demo(
+    model: Arc<Mlp>,
+    input: &Tensor,
+    requests: usize,
+    choice: BackendChoice,
+) -> bool {
     let backend: Arc<dyn Backend + Send + Sync> = pick_async_backend(choice);
     info!(
         "[engine] dispatching {requests} concurrent requests on `{}`",

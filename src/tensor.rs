@@ -184,7 +184,10 @@ impl Tensor {
     pub fn validate(&self) -> Result<(), TensorError> {
         let expected = checked_numel(&self.shape)?;
         if self.data.len() != expected {
-            return Err(TensorError::ElementCountMismatch { expected, found: self.data.len() });
+            return Err(TensorError::ElementCountMismatch {
+                expected,
+                found: self.data.len(),
+            });
         }
         Ok(())
     }
@@ -330,15 +333,31 @@ mod tests {
     #[test]
     fn conversion_revalidates_public_view_fields() {
         let bytes = [0u8; 4];
-        let view = TensorView { shape: vec![2], dtype: DataType::F32, data: &bytes };
-        assert!(matches!(view.to_tensor_f32(), Err(TensorError::ShapeMismatch { .. })));
-        let overflowing = TensorView { shape: vec![usize::MAX, 2], ..view };
-        assert!(matches!(overflowing.to_tensor_f32(), Err(TensorError::BufferOverflow)));
+        let view = TensorView {
+            shape: vec![2],
+            dtype: DataType::F32,
+            data: &bytes,
+        };
+        assert!(matches!(
+            view.to_tensor_f32(),
+            Err(TensorError::ShapeMismatch { .. })
+        ));
+        let overflowing = TensorView {
+            shape: vec![usize::MAX, 2],
+            ..view
+        };
+        assert!(matches!(
+            overflowing.to_tensor_f32(),
+            Err(TensorError::BufferOverflow)
+        ));
     }
 
     #[test]
     fn matching_corrupt_buffers_do_not_pass_parity() {
-        let corrupt = Tensor { data: vec![1.0], shape: vec![2] };
+        let corrupt = Tensor {
+            data: vec![1.0],
+            shape: vec![2],
+        };
         assert_eq!(corrupt.max_abs_diff(&corrupt), f32::INFINITY);
     }
 }

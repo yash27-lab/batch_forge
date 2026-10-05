@@ -116,9 +116,17 @@ mod tests {
 
     #[tokio::test]
     async fn zero_queue_depth_still_accepts_a_request() {
-        let model = Mlp { layers: vec![(Tensor::new(vec![2.0], vec![1, 1]).unwrap(), Tensor::zeros(vec![1]))] };
+        let model = Mlp {
+            layers: vec![(
+                Tensor::new(vec![2.0], vec![1, 1]).unwrap(),
+                Tensor::zeros(vec![1]),
+            )],
+        };
         let submitter = spawn(Arc::new(crate::model::CpuBackend), Arc::new(model), 0);
-        let out = submitter.infer(0, Tensor::new(vec![3.0], vec![1, 1]).unwrap()).await.unwrap();
+        let out = submitter
+            .infer(0, Tensor::new(vec![3.0], vec![1, 1]).unwrap())
+            .await
+            .unwrap();
         assert_eq!(out.data, vec![6.0]);
     }
 }
