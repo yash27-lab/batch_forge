@@ -9,10 +9,12 @@ use std::collections::{BTreeSet, HashMap};
 use thiserror::Error;
 
 use crate::ops;
-use crate::tensor::Tensor;
+use crate::tensor::{Tensor, TensorError};
 
 #[derive(Error, Debug)]
 pub enum ModelError {
+    #[error("invalid tensor: {0}")]
+    Tensor(#[from] TensorError),
     #[error("missing tensor '{0}' in checkpoint")]
     MissingTensor(String),
     #[error("tensor '{name}' has unexpected shape {shape:?}")]
@@ -96,6 +98,8 @@ impl Mlp {
             let b = map
                 .get(&b_name)
                 .ok_or_else(|| ModelError::MissingTensor(b_name.clone()))?;
+            w.validate()?;
+            b.validate()?;
             if w.shape.len() != 2 {
                 return Err(ModelError::BadShape {
                     name: w_name,
@@ -107,6 +111,12 @@ impl Mlp {
                     name: b_name,
                     shape: b.shape.clone(),
                 });
+            }
+            if let Some((previous, _)) = layers.last() {
+                let previous: &Tensor = previous;
+                if previous.shape[0] != w.shape[1] {
+                    return Err(ModelError::WidthMismatch { expected: previous.shape[0], got: w.shape[1] });
+                }
             }
             layers.push((w.clone(), b.clone()));
             i += 1;
@@ -213,5 +223,17 @@ mod tests {
             m.forward(&CpuBackend, &x),
             Err(ModelError::WidthMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn rejects_disconnected_checkpoint_layers() {
+        let m = tiny_model();
+        let mut map = HashMap::new();
+        for (i, (w, b)) in m.layers.into_iter().enumerate() {
+            map.insert(format!("layers.{i}.weight"), w);
+            map.insert(format!("layers.{i}.bias"), b);
+        }
+        map.insert("layers.1.weight".into(), Tensor::zeros(vec![2, 3]));
+        assert!(matches!(Mlp::from_tensors(&map), Err(ModelError::WidthMismatch { .. })));
     }
 }
