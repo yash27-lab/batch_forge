@@ -158,6 +158,10 @@ fn main() -> ExitCode {
 }
 
 fn execute(args: &Args) -> Result<(), String> {
+    #[cfg(not(target_os = "macos"))]
+    if args.backend == "metal" {
+        return Err("the Metal backend requires macOS; use --backend cpu".into());
+    }
     let model_path = args.model_dir.join("model.safetensors");
     if !model_path.is_file() {
         return Err(format!("GPT-2 weights not found at {}. Download with python python/fetch_gpt2.py, or use --model-dir to locate your assets.", model_path.display()));
@@ -175,13 +179,10 @@ fn execute(args: &Args) -> Result<(), String> {
 
     #[cfg(target_os = "macos")]
     if args.backend == "metal" {
-        match batch_forge::metal_backend::MetalBackend::new(batch_forge::SHADER_SOURCE) {
-            Ok(m) => {
-                run(&m, &model, &tok, args);
-                return Ok(());
-            }
-            Err(e) => eprintln!("Metal unavailable ({e}); using CPU"),
-        }
+        let metal = batch_forge::metal_backend::MetalBackend::new(batch_forge::SHADER_SOURCE)
+            .map_err(|e| format!("initialize Metal: {e}"))?;
+        run(&metal, &model, &tok, args);
+        return Ok(());
     }
     run(&batch_forge::model::CpuBackend, &model, &tok, args);
     Ok(())
