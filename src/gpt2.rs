@@ -464,14 +464,19 @@ impl Sampler {
         let mut probs: Vec<f64> = idx.iter().map(|&i| ((f64::from(logits[i]) - f64::from(max)) / f64::from(self.temperature)).exp()).collect();
         let sum: f64 = probs.iter().sum();
         for p in &mut probs { *p /= sum; }
-        let r = f64::from(rng.next_f32());
-        let mut acc = 0.0;
-        for (j, &p) in probs.iter().enumerate() {
-            acc += p;
-            if r <= acc { return Ok(idx[j]); }
-        }
-        Ok(idx[idx.len() - 1])
+        Ok(select_probability(&idx, &probs, f64::from(rng.next_f32())))
     }
+}
+
+fn select_probability(indices: &[usize], probabilities: &[f64], draw: f64) -> usize {
+    let mut cumulative = 0.0;
+    for (index, &probability) in probabilities.iter().enumerate() {
+        cumulative += probability;
+        if draw < cumulative { return indices[index]; }
+    }
+    // Rounding near one must still select a candidate with positive weight.
+    let last = probabilities.iter().rposition(|&p| p > 0.0).expect("sampling has no positive weight");
+    indices[last]
 }
 
 fn argmax(v: &[f32]) -> usize {
@@ -628,5 +633,11 @@ mod tests {
         let first = sampler.sample_token(&[0.0, 0.0, 0.0]).unwrap();
         assert!(first < 2);
         assert_eq!(first, sampler.sample_token(&[0.0, 0.0, 0.0]).unwrap());
+    }
+
+    #[test]
+    fn sampling_boundaries_never_choose_zero_weight() {
+        assert_eq!(select_probability(&[10, 20], &[0.0, 1.0], 0.0), 20);
+        assert_eq!(select_probability(&[10, 20, 30], &[0.5, 0.4999999999999999, 0.0], 0.9999999999999999), 20);
     }
 }
