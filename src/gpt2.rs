@@ -368,6 +368,12 @@ impl Gpt2 {
         mut on_token: impl FnMut(usize) -> bool,
     ) -> Vec<usize> {
         let mut toks = prompt.to_vec();
+        if max_new == 0 { return toks; }
+        self.config.validate().expect("invalid GPT-2 configuration");
+        sampler.validate().expect("invalid generation sampler");
+        assert!(!prompt.is_empty(), "generation requires a non-empty prompt");
+        assert!(eot_token < self.config.vocab_size, "end-of-text ID exceeds GPT-2 vocabulary");
+        assert!(prompt.iter().all(|&token| token < self.config.vocab_size), "prompt ID exceeds GPT-2 vocabulary");
         let n_ctx = self.config.n_ctx;
         let mut rng = Rng::new(sampler.seed);
         for _ in 0..max_new {
@@ -639,5 +645,17 @@ mod tests {
     fn sampling_boundaries_never_choose_zero_weight() {
         assert_eq!(select_probability(&[10, 20], &[0.0, 1.0], 0.0), 20);
         assert_eq!(select_probability(&[10, 20, 30], &[0.5, 0.4999999999999999, 0.0], 0.9999999999999999), 20);
+    }
+
+    #[test]
+    fn zero_token_generation_returns_the_prompt_without_inference() {
+        let tokens = forward_test_model().generate(&crate::model::CpuBackend, &[], 0, &Sampler::greedy(), 1, |_| panic!("unexpected inference"));
+        assert!(tokens.is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "end-of-text ID exceeds")]
+    fn generation_rejects_unknown_stop_tokens() {
+        forward_test_model().generate(&crate::model::CpuBackend, &[0], 1, &Sampler::greedy(), 999, |_| {});
     }
 }
