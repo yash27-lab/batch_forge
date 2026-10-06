@@ -13,6 +13,8 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum TokenizerError {
+    #[error("unknown tokenizer ID: {0}")]
+    UnknownTokenId(usize),
     #[error("duplicate BPE merge pair: {0:?}")]
     DuplicateMerge(String),
     #[error("invalid BPE merge line: {0:?}")]
@@ -158,6 +160,21 @@ impl Tokenizer {
             }
         }
         ids
+    }
+
+    /// Decodes token IDs, returning an error instead of skipping unknown IDs.
+    pub fn try_decode(&self, ids: &[usize]) -> Result<String, TokenizerError> {
+        Ok(String::from_utf8_lossy(&self.try_decode_bytes(ids)?).into_owned())
+    }
+
+    /// Decodes raw bytes while checking every token ID.
+    pub fn try_decode_bytes(&self, ids: &[usize]) -> Result<Vec<u8>, TokenizerError> {
+        let mut bytes = Vec::new();
+        for id in ids {
+            let token = self.decoder.get(id).ok_or(TokenizerError::UnknownTokenId(*id))?;
+            bytes.extend(token.chars().filter_map(|c| self.byte_decoder.get(&c).copied()));
+        }
+        Ok(bytes)
     }
 
     /// Decodes token ids back into text.
@@ -418,5 +435,13 @@ mod tests {
         let mut vocab = byte_vocab();
         vocab.insert("not_presenta".into(), 256);
         assert!(matches!(Tokenizer::from_assets(vocab, "not_present a"), Err(TokenizerError::MissingVocabSymbol(symbol)) if symbol == "not_present"));
+    }
+
+    #[test]
+    fn checked_decode_reports_unknown_ids_and_preserves_bytes() {
+        let tokenizer = Tokenizer::from_assets(byte_vocab(), "").unwrap();
+        assert!(matches!(tokenizer.try_decode(&[999]), Err(TokenizerError::UnknownTokenId(999))));
+        assert_eq!(tokenizer.try_decode_bytes(&[0xe2, 0x82, 0xac]).unwrap(), vec![0xe2, 0x82, 0xac]);
+        assert_eq!(tokenizer.try_decode(&[0xe2, 0x82, 0xac]).unwrap(), "€");
     }
 }
