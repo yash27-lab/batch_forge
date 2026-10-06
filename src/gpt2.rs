@@ -476,7 +476,11 @@ impl Sampler {
         let mut idx: Vec<usize> = (0..logits.len()).collect();
         if self.top_k > 0 && self.top_k < logits.len() {
             idx.select_nth_unstable_by(self.top_k, |&a, &b| {
-                logits[b].total_cmp(&logits[a]).then_with(|| a.cmp(&b))
+                if logits[a] == logits[b] {
+                    a.cmp(&b)
+                } else {
+                    logits[b].total_cmp(&logits[a])
+                }
             });
             idx.truncate(self.top_k);
             idx.sort_unstable();
@@ -723,5 +727,15 @@ mod tests {
             999,
             |_| {},
         );
+    }
+
+    #[test]
+    fn top_k_ties_treat_signed_zero_as_equal() {
+        let sampler = Sampler {
+            temperature: 1.0,
+            top_k: 1,
+            seed: 42,
+        };
+        assert_eq!(sampler.sample_token(&[-0.0, 0.0]).unwrap(), 0);
     }
 }
