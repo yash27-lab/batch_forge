@@ -20,6 +20,9 @@ pub fn matmul(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
     assert_eq!(a.len(), checked_elements(m, k), "A has wrong length");
     assert_eq!(b.len(), checked_elements(k, n), "B has wrong length");
     let mut c = vec![0.0f32; checked_elements(m, n)];
+    if c.is_empty() {
+        return c;
+    }
     for row in 0..m {
         for i in 0..k {
             let a_ik = a[row * k + i];
@@ -43,6 +46,9 @@ pub fn linear(x: &[f32], w: &[f32], b: &[f32], n: usize, in_f: usize, out_f: usi
     assert_eq!(w.len(), checked_elements(out_f, in_f));
     assert_eq!(b.len(), out_f);
     let mut y = vec![0.0f32; checked_elements(n, out_f)];
+    if y.is_empty() {
+        return y;
+    }
     for row in 0..n {
         for o in 0..out_f {
             let mut acc = b[o];
@@ -266,6 +272,9 @@ pub fn dequantize_int8(q: &[i8], scales: &[f32], rows: usize, cols: usize) -> Ve
     assert_eq!(q.len(), checked_elements(rows, cols));
     assert_eq!(scales.len(), rows);
     let mut out = vec![0.0f32; checked_elements(rows, cols)];
+    if out.is_empty() {
+        return out;
+    }
     for r in 0..rows {
         let s = scales[r];
         for c in 0..cols {
@@ -443,5 +452,12 @@ mod tests {
         assert!(std::panic::catch_unwind(|| mha(&[], &[], &[], 0, 0, 1)).is_err());
         assert!(std::panic::catch_unwind(|| mha(&[], &[], &[], 0, usize::MAX, 2)).is_err());
         assert!(mha(&[], &[], &[], 0, 1, 1).is_empty());
+    }
+
+    #[test]
+    fn empty_matrix_outputs_skip_unused_rows() {
+        assert!(matmul(&[], &[], usize::MAX, 0, 0).is_empty());
+        assert!(linear(&[], &[], &[], usize::MAX, 0, 0).is_empty());
+        assert!(dequantize_int8(&[], &[1.0; 3], 3, 0).is_empty());
     }
 }
