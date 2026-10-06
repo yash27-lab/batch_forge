@@ -459,11 +459,11 @@ impl Sampler {
             });
             idx.truncate(self.top_k);
         }
-        let max = idx.iter().map(|&i| logits[i]).fold(f32::MIN, f32::max);
-        let mut probs: Vec<f32> = idx.iter().map(|&i| ((logits[i] - max) / self.temperature).exp()).collect();
-        let sum: f32 = probs.iter().sum();
+        let max = idx.iter().map(|&i| logits[i]).fold(f32::NEG_INFINITY, f32::max);
+        let mut probs: Vec<f64> = idx.iter().map(|&i| ((f64::from(logits[i]) - f64::from(max)) / f64::from(self.temperature)).exp()).collect();
+        let sum: f64 = probs.iter().sum();
         for p in &mut probs { *p /= sum; }
-        let r = rng.next_f32();
+        let r = f64::from(rng.next_f32());
         let mut acc = 0.0;
         for (j, &p) in probs.iter().enumerate() {
             acc += p;
@@ -611,5 +611,11 @@ mod tests {
         for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
             assert!(Sampler::greedy().sample_token(&[value, 0.0]).is_err());
         }
+    }
+
+    #[test]
+    fn extreme_finite_logits_sample_without_overflow() {
+        let sampler = Sampler { temperature: f32::MIN_POSITIVE, top_k: 0, seed: 42 };
+        assert_eq!(sampler.sample_token(&[-f32::MAX, f32::MAX]).unwrap(), 1);
     }
 }
