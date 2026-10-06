@@ -139,7 +139,9 @@ pub fn rmsnorm(x: &[f32], gamma: &[f32], rows: usize, d: usize, eps: f32) -> Vec
 /// `x`[rows×d] in place. `positions[r]` gives the absolute position of row `r`.
 /// `d` must be even.
 pub fn rope_inplace(x: &mut [f32], positions: &[usize], rows: usize, d: usize, theta: f32) {
-    assert_eq!(x.len(), rows * d);
+    assert!(d > 0, "rope head dim must be positive");
+    assert!(theta.is_finite() && theta > 0.0, "rope theta must be finite and positive");
+    assert_eq!(x.len(), checked_elements(rows, d));
     assert_eq!(positions.len(), rows);
     assert_eq!(d % 2, 0, "rope head dim must be even");
     let half = d / 2;
@@ -397,5 +399,12 @@ mod tests {
         assert!(layernorm(&[], &[1.0], &[0.0], 0, 1, 1e-5).is_empty());
         assert!(rmsnorm(&[], &[1.0], 0, 1, 0.0).is_empty());
         assert!(std::panic::catch_unwind(|| layernorm(&[], &[], &[], 1, 0, 0.0)).is_err());
+    }
+
+    #[test]
+    fn rope_rejects_invalid_frequency_bases() {
+        for theta in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+            assert!(std::panic::catch_unwind(|| rope_inplace(&mut [1.0, 2.0], &[0], 1, 2, theta)).is_err());
+        }
     }
 }
