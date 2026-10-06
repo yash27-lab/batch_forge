@@ -13,6 +13,8 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum TokenizerError {
+    #[error("duplicate BPE merge pair: {0:?}")]
+    DuplicateMerge(String),
     #[error("invalid BPE merge line: {0:?}")]
     InvalidMergeLine(String),
     #[error("IO error: {0}")]
@@ -108,7 +110,9 @@ impl Tokenizer {
                 if !vocab.contains_key(&merged) {
                     return Err(TokenizerError::MissingVocabSymbol(merged));
                 }
-                bpe_ranks.insert((a.to_string(), b.to_string()), rank);
+                if bpe_ranks.insert((a.to_string(), b.to_string()), rank).is_some() {
+                    return Err(TokenizerError::DuplicateMerge(line.to_string()));
+                }
             } else {
                 return Err(TokenizerError::InvalidMergeLine(line.to_string()));
             }
@@ -395,5 +399,12 @@ mod tests {
         for line in ["a", "a b c"] {
             assert!(matches!(Tokenizer::from_assets(byte_vocab(), line), Err(TokenizerError::InvalidMergeLine(_))));
         }
+    }
+
+    #[test]
+    fn duplicate_merges_are_rejected() {
+        let mut vocab = byte_vocab();
+        vocab.insert("ab".into(), 256);
+        assert!(matches!(Tokenizer::from_assets(vocab, "a b\na b\n"), Err(TokenizerError::DuplicateMerge(_))));
     }
 }
