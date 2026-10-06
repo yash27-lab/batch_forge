@@ -106,6 +106,11 @@ impl Tokenizer {
         {
             let mut it = line.split_whitespace();
             if let (Some(a), Some(b), None) = (it.next(), it.next(), it.next()) {
+                for operand in [a, b] {
+                    if !vocab.contains_key(operand) {
+                        return Err(TokenizerError::MissingVocabSymbol(operand.to_string()));
+                    }
+                }
                 let merged = format!("{a}{b}");
                 if !vocab.contains_key(&merged) {
                     return Err(TokenizerError::MissingVocabSymbol(merged));
@@ -406,5 +411,12 @@ mod tests {
         let mut vocab = byte_vocab();
         vocab.insert("ab".into(), 256);
         assert!(matches!(Tokenizer::from_assets(vocab, "a b\na b\n"), Err(TokenizerError::DuplicateMerge(_))));
+    }
+
+    #[test]
+    fn missing_merge_operands_are_reported() {
+        let mut vocab = byte_vocab();
+        vocab.insert("not_presenta".into(), 256);
+        assert!(matches!(Tokenizer::from_assets(vocab, "not_present a"), Err(TokenizerError::MissingVocabSymbol(symbol)) if symbol == "not_present"));
     }
 }
