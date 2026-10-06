@@ -1,13 +1,12 @@
 # Rust
 /target
-Cargo.lock
 
 # Python
 venv/
 __pycache__/
 *.pyc
 
-# ML Weights & Data
+# ML Weights & Data (don't commit large binaries; generate them locally)
 *.safetensors
 *.bin
 *.pt
@@ -15,3 +14,4 @@ __pycache__/
 
 # MacOS
 .DS_Store
+models/
