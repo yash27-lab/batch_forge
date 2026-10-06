@@ -19,6 +19,8 @@ use crate::tensor::{Tensor, TensorError};
 
 #[derive(Error, Debug)]
 pub enum Gpt2Error {
+    #[error("invalid sampling input: {0}")]
+    InvalidSampling(&'static str),
     #[error("tensor '{name}' has shape {found:?}; expected {expected:?}")]
     BadShape {
         name: String,
@@ -420,18 +422,36 @@ pub struct Sampler {
 impl Sampler {
     /// Greedy (argmax) sampling.
     pub fn greedy() -> Self {
-        Sampler {
-            temperature: 0.0,
-            top_k: 0,
-            seed: 0,
+        Sampler { temperature: 0.0, top_k: 0, seed: 0 }
+    }
+
+    pub fn validate(&self) -> Result<(), Gpt2Error> {
+        if !self.temperature.is_finite() || self.temperature < 0.0 {
+            return Err(Gpt2Error::InvalidSampling("temperature must be finite and non-negative"));
         }
+        Ok(())
+    }
+
+    /// Samples one token using this seed. Generation retains the RNG across tokens.
+    pub fn sample_token(&self, logits: &[f32]) -> Result<usize, Gpt2Error> {
+        self.sample_checked(logits, &mut Rng::new(self.seed))
     }
 
     fn sample(&self, logits: &[f32], rng: &mut Rng) -> usize {
-        if self.temperature <= 0.0 {
-            return argmax(logits);
+        self.sample_checked(logits, rng).expect("invalid token sampling input")
+    }
+
+    fn sample_checked(&self, logits: &[f32], rng: &mut Rng) -> Result<usize, Gpt2Error> {
+        self.validate()?;
+        if logits.is_empty() {
+            return Err(Gpt2Error::InvalidSampling("logits must not be empty"));
         }
-        // Optional top-k: keep only the k highest logits.
+        if logits.iter().any(|logit| !logit.is_finite()) {
+            return Err(Gpt2Error::InvalidSampling("logits must be finite"));
+        }
+        if self.temperature == 0.0 {
+            return Ok(argmax(logits));
+        }
         let mut idx: Vec<usize> = (0..logits.len()).collect();
         if self.top_k > 0 && self.top_k < logits.len() {
             idx.select_nth_unstable_by(self.top_k, |&a, &b| {
@@ -440,23 +460,16 @@ impl Sampler {
             idx.truncate(self.top_k);
         }
         let max = idx.iter().map(|&i| logits[i]).fold(f32::MIN, f32::max);
-        let mut probs: Vec<f32> = idx
-            .iter()
-            .map(|&i| ((logits[i] - max) / self.temperature).exp())
-            .collect();
+        let mut probs: Vec<f32> = idx.iter().map(|&i| ((logits[i] - max) / self.temperature).exp()).collect();
         let sum: f32 = probs.iter().sum();
-        for p in &mut probs {
-            *p /= sum;
-        }
+        for p in &mut probs { *p /= sum; }
         let r = rng.next_f32();
         let mut acc = 0.0;
         for (j, &p) in probs.iter().enumerate() {
             acc += p;
-            if r <= acc {
-                return idx[j];
-            }
+            if r <= acc { return Ok(idx[j]); }
         }
-        idx[idx.len() - 1]
+        Ok(idx[idx.len() - 1])
     }
 }
 
@@ -587,5 +600,16 @@ mod tests {
         );
         assert_eq!(calls, 1);
         assert_eq!(tokens.len(), 2);
+    }
+
+    #[test]
+    fn checked_sampling_rejects_invalid_inputs() {
+        for temperature in [f32::NAN, f32::INFINITY, -1.0] {
+            assert!(Sampler { temperature, top_k: 1, seed: 0 }.sample_token(&[0.0]).is_err());
+        }
+        assert!(Sampler::greedy().sample_token(&[]).is_err());
+        for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert!(Sampler::greedy().sample_token(&[value, 0.0]).is_err());
+        }
     }
 }
