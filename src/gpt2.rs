@@ -455,9 +455,10 @@ impl Sampler {
         let mut idx: Vec<usize> = (0..logits.len()).collect();
         if self.top_k > 0 && self.top_k < logits.len() {
             idx.select_nth_unstable_by(self.top_k, |&a, &b| {
-                logits[b].partial_cmp(&logits[a]).unwrap()
+                logits[b].total_cmp(&logits[a]).then_with(|| a.cmp(&b))
             });
             idx.truncate(self.top_k);
+            idx.sort_unstable();
         }
         let max = idx.iter().map(|&i| logits[i]).fold(f32::NEG_INFINITY, f32::max);
         let mut probs: Vec<f64> = idx.iter().map(|&i| ((f64::from(logits[i]) - f64::from(max)) / f64::from(self.temperature)).exp()).collect();
@@ -617,5 +618,15 @@ mod tests {
     fn extreme_finite_logits_sample_without_overflow() {
         let sampler = Sampler { temperature: f32::MIN_POSITIVE, top_k: 0, seed: 42 };
         assert_eq!(sampler.sample_token(&[-f32::MAX, f32::MAX]).unwrap(), 1);
+    }
+
+    #[test]
+    fn top_k_ties_choose_lowest_ids_and_repeat_from_a_seed() {
+        let sampler = Sampler { temperature: 1.0, top_k: 1, seed: 42 };
+        assert_eq!(sampler.sample_token(&[0.0, 0.0, 0.0]).unwrap(), 0);
+        let sampler = Sampler { top_k: 2, ..sampler };
+        let first = sampler.sample_token(&[0.0, 0.0, 0.0]).unwrap();
+        assert!(first < 2);
+        assert_eq!(first, sampler.sample_token(&[0.0, 0.0, 0.0]).unwrap());
     }
 }
