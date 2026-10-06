@@ -213,12 +213,13 @@ pub fn attention(
 /// heads laid out contiguously per row; output has the same shape. Query `i`
 /// attends causally over keys `j <= i`. This is the GPT-2 attention reference.
 pub fn mha(q: &[f32], k: &[f32], v: &[f32], seq: usize, heads: usize, head_dim: usize) -> Vec<f32> {
-    let hd = heads * head_dim;
-    assert_eq!(q.len(), seq * hd);
-    assert_eq!(k.len(), seq * hd);
-    assert_eq!(v.len(), seq * hd);
+    assert!(heads > 0 && head_dim > 0, "attention heads and head width must be positive");
+    let hd = checked_elements(heads, head_dim);
+    assert_eq!(q.len(), checked_elements(seq, hd));
+    assert_eq!(k.len(), checked_elements(seq, hd));
+    assert_eq!(v.len(), checked_elements(seq, hd));
     let scale = 1.0 / (head_dim as f32).sqrt();
-    let mut out = vec![0.0f32; seq * hd];
+    let mut out = vec![0.0f32; checked_elements(seq, hd)];
     let mut scores = vec![0.0f32; seq];
     for h in 0..heads {
         let base = h * head_dim;
@@ -414,5 +415,12 @@ mod tests {
     fn attention_large_offset_attends_to_all_available_keys() {
         let out = attention(&[0.0], &[0.0, 0.0], &[2.0, 4.0], 1, 2, 1, true, usize::MAX);
         assert_eq!(out, vec![3.0]);
+    }
+
+    #[test]
+    fn mha_rejects_zero_and_overflowing_head_dimensions() {
+        assert!(std::panic::catch_unwind(|| mha(&[], &[], &[], 0, 0, 1)).is_err());
+        assert!(std::panic::catch_unwind(|| mha(&[], &[], &[], 0, usize::MAX, 2)).is_err());
+        assert!(mha(&[], &[], &[], 0, 1, 1).is_empty());
     }
 }
