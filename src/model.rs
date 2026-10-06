@@ -102,7 +102,7 @@ impl Mlp {
                 .ok_or_else(|| ModelError::MissingTensor(b_name.clone()))?;
             w.validate()?;
             b.validate()?;
-            if w.shape.len() != 2 {
+            if w.shape.len() != 2 || w.shape.contains(&0) {
                 return Err(ModelError::BadShape {
                     name: w_name,
                     shape: w.shape.clone(),
@@ -132,6 +132,40 @@ impl Mlp {
         Ok(Self { layers })
     }
 
+    /// Revalidates public layers before inference.
+    pub fn validate(&self) -> Result<(), ModelError> {
+        if self.layers.is_empty() {
+            return Err(ModelError::NoLayers);
+        }
+        let mut previous_width = None;
+        for (index, (weight, bias)) in self.layers.iter().enumerate() {
+            weight.validate()?;
+            bias.validate()?;
+            if weight.shape.len() != 2 || weight.shape.contains(&0) {
+                return Err(ModelError::BadShape {
+                    name: format!("layers.{index}.weight"),
+                    shape: weight.shape.clone(),
+                });
+            }
+            if bias.shape.as_slice() != [weight.shape[0]] {
+                return Err(ModelError::BadShape {
+                    name: format!("layers.{index}.bias"),
+                    shape: bias.shape.clone(),
+                });
+            }
+            if let Some(expected) = previous_width {
+                if weight.shape[1] != expected {
+                    return Err(ModelError::WidthMismatch {
+                        expected,
+                        got: weight.shape[1],
+                    });
+                }
+            }
+            previous_width = Some(weight.shape[0]);
+        }
+        Ok(())
+    }
+
     /// Input feature width expected by the first layer.
     pub fn in_features(&self) -> usize {
         self.layers[0].0.shape[1]
@@ -151,9 +185,7 @@ impl Mlp {
         backend: &B,
         x: &Tensor,
     ) -> Result<Tensor, ModelError> {
-        if self.layers.is_empty() {
-            return Err(ModelError::NoLayers);
-        }
+        self.validate()?;
         x.validate()?;
         let (_, in_f) = x.dims2().map_err(|_| ModelError::WidthMismatch {
             expected: self.in_features(),
@@ -262,6 +294,34 @@ mod tests {
         assert!(matches!(
             Mlp { layers: Vec::new() }.forward(&CpuBackend, &corrupt),
             Err(ModelError::NoLayers)
+        ));
+    }
+
+    #[test]
+    fn checkpoint_rejects_zero_feature_width() {
+        let mut map = HashMap::new();
+        map.insert("layers.0.weight".into(), Tensor::zeros(vec![2, 0]));
+        map.insert("layers.0.bias".into(), Tensor::zeros(vec![2]));
+        assert!(matches!(
+            Mlp::from_tensors(&map),
+            Err(ModelError::BadShape { .. })
+        ));
+    }
+
+    #[test]
+    fn forward_revalidates_mutated_public_weights_and_biases() {
+        let mut model = tiny_model();
+        let input = Tensor::zeros(vec![1, 2]);
+        model.layers[0].0.data.pop();
+        assert!(matches!(
+            model.forward(&CpuBackend, &input),
+            Err(ModelError::Tensor(_))
+        ));
+        let mut model = tiny_model();
+        model.layers[0].1 = Tensor::zeros(vec![1]);
+        assert!(matches!(
+            model.forward(&CpuBackend, &input),
+            Err(ModelError::BadShape { .. })
         ));
     }
 }

@@ -21,6 +21,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: asset downloader tests (no network)
+        run: python3 -m unittest discover -s python -p 'test_*.py'
       - name: rustfmt
         run: cargo fmt --all -- --check
       - name: clippy

@@ -13,6 +13,12 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum TokenizerError {
+    #[error("unknown tokenizer ID: {0}")]
+    UnknownTokenId(usize),
+    #[error("duplicate BPE merge pair: {0:?}")]
+    DuplicateMerge(String),
+    #[error("invalid BPE merge line: {0:?}")]
+    InvalidMergeLine(String),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("failed to parse vocab.json: {0}")]
@@ -96,16 +102,29 @@ impl Tokenizer {
         let mut bpe_ranks = HashMap::new();
         for (rank, line) in merges_raw
             .lines()
-            .filter(|l| !l.starts_with('#'))
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with("#version:"))
             .enumerate()
         {
             let mut it = line.split_whitespace();
-            if let (Some(a), Some(b)) = (it.next(), it.next()) {
+            if let (Some(a), Some(b), None) = (it.next(), it.next(), it.next()) {
+                for operand in [a, b] {
+                    if !vocab.contains_key(operand) {
+                        return Err(TokenizerError::MissingVocabSymbol(operand.to_string()));
+                    }
+                }
                 let merged = format!("{a}{b}");
                 if !vocab.contains_key(&merged) {
                     return Err(TokenizerError::MissingVocabSymbol(merged));
                 }
-                bpe_ranks.insert((a.to_string(), b.to_string()), rank);
+                if bpe_ranks
+                    .insert((a.to_string(), b.to_string()), rank)
+                    .is_some()
+                {
+                    return Err(TokenizerError::DuplicateMerge(line.to_string()));
+                }
+            } else {
+                return Err(TokenizerError::InvalidMergeLine(line.to_string()));
             }
         }
 
@@ -144,6 +163,28 @@ impl Tokenizer {
             }
         }
         ids
+    }
+
+    /// Decodes token IDs, returning an error instead of skipping unknown IDs.
+    pub fn try_decode(&self, ids: &[usize]) -> Result<String, TokenizerError> {
+        Ok(String::from_utf8_lossy(&self.try_decode_bytes(ids)?).into_owned())
+    }
+
+    /// Decodes raw bytes while checking every token ID.
+    pub fn try_decode_bytes(&self, ids: &[usize]) -> Result<Vec<u8>, TokenizerError> {
+        let mut bytes = Vec::new();
+        for id in ids {
+            let token = self
+                .decoder
+                .get(id)
+                .ok_or(TokenizerError::UnknownTokenId(*id))?;
+            bytes.extend(
+                token
+                    .chars()
+                    .filter_map(|c| self.byte_decoder.get(&c).copied()),
+            );
+        }
+        Ok(bytes)
     }
 
     /// Decodes token ids back into text.
@@ -248,6 +289,9 @@ fn pre_tokenize(text: &str) -> Vec<String> {
             let mut e = i;
             while e < n && chars[e].is_whitespace() {
                 e += 1;
+            }
+            if e < n && e - i > 1 {
+                e -= 1;
             }
             out.push(chars[i..e].iter().collect());
             i = e;
@@ -364,5 +408,64 @@ mod tests {
         let tokenizer = Tokenizer::from_assets(vocab, "#version: 0.2\na b\n").unwrap();
         assert_eq!(tokenizer.encode("ab"), vec![256]);
         assert_eq!(tokenizer.decode(&[256]), "ab");
+    }
+
+    #[test]
+    fn whitespace_runs_match_gpt2_lookahead() {
+        assert_eq!(pre_tokenize("a  b"), vec!["a", " ", " b"]);
+        assert_eq!(pre_tokenize("a   b"), vec!["a", "  ", " b"]);
+        assert_eq!(pre_tokenize("a  "), vec!["a", "  "]);
+        assert_eq!(pre_tokenize("a\n b"), vec!["a", "\n", " b"]);
+    }
+
+    #[test]
+    fn hash_prefix_merges_are_not_comments() {
+        let mut vocab = byte_vocab();
+        vocab.insert("##".into(), 256);
+        let tokenizer = Tokenizer::from_assets(vocab, "#version: 0.2\n\n# #\n").unwrap();
+        assert_eq!(tokenizer.encode("##"), vec![256]);
+    }
+
+    #[test]
+    fn malformed_merge_lines_are_reported() {
+        for line in ["a", "a b c"] {
+            assert!(matches!(
+                Tokenizer::from_assets(byte_vocab(), line),
+                Err(TokenizerError::InvalidMergeLine(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn duplicate_merges_are_rejected() {
+        let mut vocab = byte_vocab();
+        vocab.insert("ab".into(), 256);
+        assert!(matches!(
+            Tokenizer::from_assets(vocab, "a b\na b\n"),
+            Err(TokenizerError::DuplicateMerge(_))
+        ));
+    }
+
+    #[test]
+    fn missing_merge_operands_are_reported() {
+        let mut vocab = byte_vocab();
+        vocab.insert("not_presenta".into(), 256);
+        assert!(
+            matches!(Tokenizer::from_assets(vocab, "not_present a"), Err(TokenizerError::MissingVocabSymbol(symbol)) if symbol == "not_present")
+        );
+    }
+
+    #[test]
+    fn checked_decode_reports_unknown_ids_and_preserves_bytes() {
+        let tokenizer = Tokenizer::from_assets(byte_vocab(), "").unwrap();
+        assert!(matches!(
+            tokenizer.try_decode(&[999]),
+            Err(TokenizerError::UnknownTokenId(999))
+        ));
+        assert_eq!(
+            tokenizer.try_decode_bytes(&[0xe2, 0x82, 0xac]).unwrap(),
+            vec![0xe2, 0x82, 0xac]
+        );
+        assert_eq!(tokenizer.try_decode(&[0xe2, 0x82, 0xac]).unwrap(), "€");
     }
 }

@@ -93,3 +93,30 @@ exist:
 - No SSM `scan` op (not implemented).
 - No full transformer-LM end-to-end parity (no LM yet) — only the MLP is verified
   end-to-end, plus every individual operator above.
+
+## Invalid-input contracts and sampling
+
+CPU reference operators check dimension products before allocation. Normalization
+requires a positive width and a finite non-negative epsilon; rotary embeddings
+require a finite positive theta. Attention validates head widths and bounds
+absolute causal offsets without wrapping.
+
+Use Sampler::sample_token for checked single-token sampling, and Sampler::validate
+to check temperature. Empty or non-finite logits are rejected. Probabilities use
+f64 intermediates; top-k ties prefer smaller token IDs and the retained candidates
+have a stable ID order. Seeded sampled sequences may differ from earlier versions
+because their candidate ordering and arithmetic were corrected. Greedy finite
+argmax retains its earliest-ID tie behavior.
+
+Tokenizer merge parsing retains hash-prefixed merge tokens, rejects malformed or
+duplicate pairs, and checks both operands. Repeated whitespace preserves GPT-2's
+lookahead boundary before the next token. The additive try_decode and
+try_decode_bytes APIs report unknown token IDs; existing decode APIs retain their
+permissive behavior.
+
+The download script accepts --out, --timeout, and --force. Each transfer uses a
+temporary file beside its destination, checks any advertised Content-Length, and
+atomically replaces the destination only after completion. Existing nonempty
+assets are skipped by default; --force refreshes them. Network-free downloader
+regressions run in CI. These tests do not download or validate pretrained GPT-2
+weights and do not replace on-device Metal parity tests.

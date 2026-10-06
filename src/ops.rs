@@ -10,11 +10,19 @@
 //! * `gelu` uses the tanh approximation, matching `jax.nn.gelu(approximate=True)`.
 //! * `rope` uses the rotate-half (GPT-NeoX / HF) convention.
 
+fn checked_elements(rows: usize, cols: usize) -> usize {
+    rows.checked_mul(cols)
+        .expect("operator dimensions overflow")
+}
+
 /// Standard matrix multiply: `A`[m×k] · `B`[k×n] → `C`[m×n] (row-major).
 pub fn matmul(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
-    assert_eq!(a.len(), m * k, "A has wrong length");
-    assert_eq!(b.len(), k * n, "B has wrong length");
-    let mut c = vec![0.0f32; m * n];
+    assert_eq!(a.len(), checked_elements(m, k), "A has wrong length");
+    assert_eq!(b.len(), checked_elements(k, n), "B has wrong length");
+    let mut c = vec![0.0f32; checked_elements(m, n)];
+    if c.is_empty() {
+        return c;
+    }
     for row in 0..m {
         for i in 0..k {
             let a_ik = a[row * k + i];
@@ -34,10 +42,13 @@ pub fn matmul(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
 ///
 /// `x`[n×in], `w`[out×in], `b`[out] → `[n×out]`.
 pub fn linear(x: &[f32], w: &[f32], b: &[f32], n: usize, in_f: usize, out_f: usize) -> Vec<f32> {
-    assert_eq!(x.len(), n * in_f);
-    assert_eq!(w.len(), out_f * in_f);
+    assert_eq!(x.len(), checked_elements(n, in_f));
+    assert_eq!(w.len(), checked_elements(out_f, in_f));
     assert_eq!(b.len(), out_f);
-    let mut y = vec![0.0f32; n * out_f];
+    let mut y = vec![0.0f32; checked_elements(n, out_f)];
+    if y.is_empty() {
+        return y;
+    }
     for row in 0..n {
         for o in 0..out_f {
             let mut acc = b[o];
@@ -95,10 +106,15 @@ pub fn layernorm(
     d: usize,
     eps: f32,
 ) -> Vec<f32> {
-    assert_eq!(x.len(), rows * d);
+    assert!(d > 0, "normalization width must be positive");
+    assert!(
+        eps.is_finite() && eps >= 0.0,
+        "normalization epsilon must be finite and non-negative"
+    );
+    assert_eq!(x.len(), checked_elements(rows, d));
     assert_eq!(gamma.len(), d);
     assert_eq!(beta.len(), d);
-    let mut out = vec![0.0f32; rows * d];
+    let mut out = vec![0.0f32; checked_elements(rows, d)];
     for r in 0..rows {
         let row = &x[r * d..r * d + d];
         let mean = row.iter().sum::<f32>() / d as f32;
@@ -113,9 +129,14 @@ pub fn layernorm(
 
 /// Row-wise RMSNorm over the last dimension of size `d`: `y = x / sqrt(mean(x²) + eps) * gamma`.
 pub fn rmsnorm(x: &[f32], gamma: &[f32], rows: usize, d: usize, eps: f32) -> Vec<f32> {
-    assert_eq!(x.len(), rows * d);
+    assert!(d > 0, "normalization width must be positive");
+    assert!(
+        eps.is_finite() && eps >= 0.0,
+        "normalization epsilon must be finite and non-negative"
+    );
+    assert_eq!(x.len(), checked_elements(rows, d));
     assert_eq!(gamma.len(), d);
-    let mut out = vec![0.0f32; rows * d];
+    let mut out = vec![0.0f32; checked_elements(rows, d)];
     for r in 0..rows {
         let row = &x[r * d..r * d + d];
         let ms = row.iter().map(|v| v * v).sum::<f32>() / d as f32;
@@ -131,7 +152,12 @@ pub fn rmsnorm(x: &[f32], gamma: &[f32], rows: usize, d: usize, eps: f32) -> Vec
 /// `x`[rows×d] in place. `positions[r]` gives the absolute position of row `r`.
 /// `d` must be even.
 pub fn rope_inplace(x: &mut [f32], positions: &[usize], rows: usize, d: usize, theta: f32) {
-    assert_eq!(x.len(), rows * d);
+    assert!(d > 0, "rope head dim must be positive");
+    assert!(
+        theta.is_finite() && theta > 0.0,
+        "rope theta must be finite and positive"
+    );
+    assert_eq!(x.len(), checked_elements(rows, d));
     assert_eq!(positions.len(), rows);
     assert_eq!(d % 2, 0, "rope head dim must be even");
     let half = d / 2;
@@ -166,15 +192,20 @@ pub fn attention(
     causal: bool,
     q_offset: usize,
 ) -> Vec<f32> {
-    assert_eq!(q.len(), m * d);
-    assert_eq!(k.len(), seq * d);
-    assert_eq!(v.len(), seq * d);
+    assert!(d > 0, "attention width must be positive");
+    assert!(
+        seq > 0 || m == 0,
+        "non-empty attention queries require keys"
+    );
+    assert_eq!(q.len(), checked_elements(m, d));
+    assert_eq!(k.len(), checked_elements(seq, d));
+    assert_eq!(v.len(), checked_elements(seq, d));
     let scale = 1.0 / (d as f32).sqrt();
-    let mut out = vec![0.0f32; m * d];
+    let mut out = vec![0.0f32; checked_elements(m, d)];
     let mut scores = vec![0.0f32; seq];
     for qi in 0..m {
         let limit = if causal {
-            (qi + q_offset + 1).min(seq)
+            qi.saturating_add(q_offset).saturating_add(1).min(seq)
         } else {
             seq
         };
@@ -201,12 +232,16 @@ pub fn attention(
 /// heads laid out contiguously per row; output has the same shape. Query `i`
 /// attends causally over keys `j <= i`. This is the GPT-2 attention reference.
 pub fn mha(q: &[f32], k: &[f32], v: &[f32], seq: usize, heads: usize, head_dim: usize) -> Vec<f32> {
-    let hd = heads * head_dim;
-    assert_eq!(q.len(), seq * hd);
-    assert_eq!(k.len(), seq * hd);
-    assert_eq!(v.len(), seq * hd);
+    assert!(
+        heads > 0 && head_dim > 0,
+        "attention heads and head width must be positive"
+    );
+    let hd = checked_elements(heads, head_dim);
+    assert_eq!(q.len(), checked_elements(seq, hd));
+    assert_eq!(k.len(), checked_elements(seq, hd));
+    assert_eq!(v.len(), checked_elements(seq, hd));
     let scale = 1.0 / (head_dim as f32).sqrt();
-    let mut out = vec![0.0f32; seq * hd];
+    let mut out = vec![0.0f32; checked_elements(seq, hd)];
     let mut scores = vec![0.0f32; seq];
     for h in 0..heads {
         let base = h * head_dim;
@@ -234,9 +269,12 @@ pub fn mha(q: &[f32], k: &[f32], v: &[f32], seq: usize, heads: usize, head_dim: 
 
 /// Dequantizes a per-row INT8 weight matrix: `out[r,c] = q[r,c] · scale[r]`.
 pub fn dequantize_int8(q: &[i8], scales: &[f32], rows: usize, cols: usize) -> Vec<f32> {
-    assert_eq!(q.len(), rows * cols);
+    assert_eq!(q.len(), checked_elements(rows, cols));
     assert_eq!(scales.len(), rows);
-    let mut out = vec![0.0f32; rows * cols];
+    let mut out = vec![0.0f32; checked_elements(rows, cols)];
+    if out.is_empty() {
+        return out;
+    }
     for r in 0..rows {
         let s = scales[r];
         for c in 0..cols {
@@ -368,5 +406,58 @@ mod tests {
         let scales = [0.1f32];
         let out = dequantize_int8(&q, &scales, 1, 3);
         approx(&out, &[1.0, -1.0, 10.0], 1e-6);
+    }
+
+    #[test]
+    #[should_panic(expected = "operator dimensions overflow")]
+    fn matmul_rejects_overflow_before_allocation() {
+        matmul(&[], &[], usize::MAX, 2, 1);
+    }
+
+    #[test]
+    fn normalization_rejects_invalid_epsilon() {
+        for eps in [f32::NAN, f32::INFINITY, -1.0] {
+            assert!(
+                std::panic::catch_unwind(|| layernorm(&[1.0], &[1.0], &[0.0], 1, 1, eps)).is_err()
+            );
+            assert!(std::panic::catch_unwind(|| rmsnorm(&[1.0], &[1.0], 1, 1, eps)).is_err());
+        }
+    }
+
+    #[test]
+    fn normalization_distinguishes_empty_batches_from_zero_width() {
+        assert!(layernorm(&[], &[1.0], &[0.0], 0, 1, 1e-5).is_empty());
+        assert!(rmsnorm(&[], &[1.0], 0, 1, 0.0).is_empty());
+        assert!(std::panic::catch_unwind(|| layernorm(&[], &[], &[], 1, 0, 0.0)).is_err());
+    }
+
+    #[test]
+    fn rope_rejects_invalid_frequency_bases() {
+        for theta in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+            assert!(
+                std::panic::catch_unwind(|| rope_inplace(&mut [1.0, 2.0], &[0], 1, 2, theta))
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn attention_large_offset_attends_to_all_available_keys() {
+        let out = attention(&[0.0], &[0.0, 0.0], &[2.0, 4.0], 1, 2, 1, true, usize::MAX);
+        assert_eq!(out, vec![3.0]);
+    }
+
+    #[test]
+    fn mha_rejects_zero_and_overflowing_head_dimensions() {
+        assert!(std::panic::catch_unwind(|| mha(&[], &[], &[], 0, 0, 1)).is_err());
+        assert!(std::panic::catch_unwind(|| mha(&[], &[], &[], 0, usize::MAX, 2)).is_err());
+        assert!(mha(&[], &[], &[], 0, 1, 1).is_empty());
+    }
+
+    #[test]
+    fn empty_matrix_outputs_skip_unused_rows() {
+        assert!(matmul(&[], &[], usize::MAX, 0, 0).is_empty());
+        assert!(linear(&[], &[], &[], usize::MAX, 0, 0).is_empty());
+        assert!(dequantize_int8(&[], &[1.0; 3], 3, 0).is_empty());
     }
 }
