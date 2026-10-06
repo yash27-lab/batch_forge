@@ -249,6 +249,9 @@ fn pre_tokenize(text: &str) -> Vec<String> {
             while e < n && chars[e].is_whitespace() {
                 e += 1;
             }
+            if e < n && e - i > 1 {
+                e -= 1;
+            }
             out.push(chars[i..e].iter().collect());
             i = e;
             continue;
@@ -364,5 +367,13 @@ mod tests {
         let tokenizer = Tokenizer::from_assets(vocab, "#version: 0.2\na b\n").unwrap();
         assert_eq!(tokenizer.encode("ab"), vec![256]);
         assert_eq!(tokenizer.decode(&[256]), "ab");
+    }
+
+    #[test]
+    fn whitespace_runs_match_gpt2_lookahead() {
+        assert_eq!(pre_tokenize("a  b"), vec!["a", " ", " b"]);
+        assert_eq!(pre_tokenize("a   b"), vec!["a", "  ", " b"]);
+        assert_eq!(pre_tokenize("a  "), vec!["a", "  "]);
+        assert_eq!(pre_tokenize("a\n b"), vec!["a", "\n", " b"]);
     }
 }
