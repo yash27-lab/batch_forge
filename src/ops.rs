@@ -99,6 +99,7 @@ pub fn layernorm(
     d: usize,
     eps: f32,
 ) -> Vec<f32> {
+    assert!(eps.is_finite() && eps >= 0.0, "normalization epsilon must be finite and non-negative");
     assert_eq!(x.len(), rows * d);
     assert_eq!(gamma.len(), d);
     assert_eq!(beta.len(), d);
@@ -117,6 +118,7 @@ pub fn layernorm(
 
 /// Row-wise RMSNorm over the last dimension of size `d`: `y = x / sqrt(mean(x²) + eps) * gamma`.
 pub fn rmsnorm(x: &[f32], gamma: &[f32], rows: usize, d: usize, eps: f32) -> Vec<f32> {
+    assert!(eps.is_finite() && eps >= 0.0, "normalization epsilon must be finite and non-negative");
     assert_eq!(x.len(), rows * d);
     assert_eq!(gamma.len(), d);
     let mut out = vec![0.0f32; rows * d];
@@ -378,5 +380,13 @@ mod tests {
     #[should_panic(expected = "operator dimensions overflow")]
     fn matmul_rejects_overflow_before_allocation() {
         matmul(&[], &[], usize::MAX, 2, 1);
+    }
+
+    #[test]
+    fn normalization_rejects_invalid_epsilon() {
+        for eps in [f32::NAN, f32::INFINITY, -1.0] {
+            assert!(std::panic::catch_unwind(|| layernorm(&[1.0], &[1.0], &[0.0], 1, 1, eps)).is_err());
+            assert!(std::panic::catch_unwind(|| rmsnorm(&[1.0], &[1.0], 1, 1, eps)).is_err());
+        }
     }
 }
