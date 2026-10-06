@@ -10,11 +10,15 @@
 //! * `gelu` uses the tanh approximation, matching `jax.nn.gelu(approximate=True)`.
 //! * `rope` uses the rotate-half (GPT-NeoX / HF) convention.
 
+fn checked_elements(rows: usize, cols: usize) -> usize {
+    rows.checked_mul(cols).expect("operator dimensions overflow")
+}
+
 /// Standard matrix multiply: `A`[m×k] · `B`[k×n] → `C`[m×n] (row-major).
 pub fn matmul(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
-    assert_eq!(a.len(), m * k, "A has wrong length");
-    assert_eq!(b.len(), k * n, "B has wrong length");
-    let mut c = vec![0.0f32; m * n];
+    assert_eq!(a.len(), checked_elements(m, k), "A has wrong length");
+    assert_eq!(b.len(), checked_elements(k, n), "B has wrong length");
+    let mut c = vec![0.0f32; checked_elements(m, n)];
     for row in 0..m {
         for i in 0..k {
             let a_ik = a[row * k + i];
@@ -34,10 +38,10 @@ pub fn matmul(a: &[f32], b: &[f32], m: usize, k: usize, n: usize) -> Vec<f32> {
 ///
 /// `x`[n×in], `w`[out×in], `b`[out] → `[n×out]`.
 pub fn linear(x: &[f32], w: &[f32], b: &[f32], n: usize, in_f: usize, out_f: usize) -> Vec<f32> {
-    assert_eq!(x.len(), n * in_f);
-    assert_eq!(w.len(), out_f * in_f);
+    assert_eq!(x.len(), checked_elements(n, in_f));
+    assert_eq!(w.len(), checked_elements(out_f, in_f));
     assert_eq!(b.len(), out_f);
-    let mut y = vec![0.0f32; n * out_f];
+    let mut y = vec![0.0f32; checked_elements(n, out_f)];
     for row in 0..n {
         for o in 0..out_f {
             let mut acc = b[o];
@@ -234,9 +238,9 @@ pub fn mha(q: &[f32], k: &[f32], v: &[f32], seq: usize, heads: usize, head_dim: 
 
 /// Dequantizes a per-row INT8 weight matrix: `out[r,c] = q[r,c] · scale[r]`.
 pub fn dequantize_int8(q: &[i8], scales: &[f32], rows: usize, cols: usize) -> Vec<f32> {
-    assert_eq!(q.len(), rows * cols);
+    assert_eq!(q.len(), checked_elements(rows, cols));
     assert_eq!(scales.len(), rows);
-    let mut out = vec![0.0f32; rows * cols];
+    let mut out = vec![0.0f32; checked_elements(rows, cols)];
     for r in 0..rows {
         let s = scales[r];
         for c in 0..cols {
@@ -368,5 +372,11 @@ mod tests {
         let scales = [0.1f32];
         let out = dequantize_int8(&q, &scales, 1, 3);
         approx(&out, &[1.0, -1.0, 10.0], 1e-6);
+    }
+
+    #[test]
+    #[should_panic(expected = "operator dimensions overflow")]
+    fn matmul_rejects_overflow_before_allocation() {
+        matmul(&[], &[], usize::MAX, 2, 1);
     }
 }
