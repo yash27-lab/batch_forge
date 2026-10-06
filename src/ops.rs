@@ -99,11 +99,12 @@ pub fn layernorm(
     d: usize,
     eps: f32,
 ) -> Vec<f32> {
+    assert!(d > 0, "normalization width must be positive");
     assert!(eps.is_finite() && eps >= 0.0, "normalization epsilon must be finite and non-negative");
-    assert_eq!(x.len(), rows * d);
+    assert_eq!(x.len(), checked_elements(rows, d));
     assert_eq!(gamma.len(), d);
     assert_eq!(beta.len(), d);
-    let mut out = vec![0.0f32; rows * d];
+    let mut out = vec![0.0f32; checked_elements(rows, d)];
     for r in 0..rows {
         let row = &x[r * d..r * d + d];
         let mean = row.iter().sum::<f32>() / d as f32;
@@ -118,10 +119,11 @@ pub fn layernorm(
 
 /// Row-wise RMSNorm over the last dimension of size `d`: `y = x / sqrt(mean(x²) + eps) * gamma`.
 pub fn rmsnorm(x: &[f32], gamma: &[f32], rows: usize, d: usize, eps: f32) -> Vec<f32> {
+    assert!(d > 0, "normalization width must be positive");
     assert!(eps.is_finite() && eps >= 0.0, "normalization epsilon must be finite and non-negative");
-    assert_eq!(x.len(), rows * d);
+    assert_eq!(x.len(), checked_elements(rows, d));
     assert_eq!(gamma.len(), d);
-    let mut out = vec![0.0f32; rows * d];
+    let mut out = vec![0.0f32; checked_elements(rows, d)];
     for r in 0..rows {
         let row = &x[r * d..r * d + d];
         let ms = row.iter().map(|v| v * v).sum::<f32>() / d as f32;
@@ -388,5 +390,12 @@ mod tests {
             assert!(std::panic::catch_unwind(|| layernorm(&[1.0], &[1.0], &[0.0], 1, 1, eps)).is_err());
             assert!(std::panic::catch_unwind(|| rmsnorm(&[1.0], &[1.0], 1, 1, eps)).is_err());
         }
+    }
+
+    #[test]
+    fn normalization_distinguishes_empty_batches_from_zero_width() {
+        assert!(layernorm(&[], &[1.0], &[0.0], 0, 1, 1e-5).is_empty());
+        assert!(rmsnorm(&[], &[1.0], 0, 1, 0.0).is_empty());
+        assert!(std::panic::catch_unwind(|| layernorm(&[], &[], &[], 1, 0, 0.0)).is_err());
     }
 }
