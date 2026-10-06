@@ -13,6 +13,8 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum TokenizerError {
+    #[error("invalid BPE merge line: {0:?}")]
+    InvalidMergeLine(String),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("failed to parse vocab.json: {0}")]
@@ -96,16 +98,19 @@ impl Tokenizer {
         let mut bpe_ranks = HashMap::new();
         for (rank, line) in merges_raw
             .lines()
-            .filter(|l| !l.starts_with('#'))
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with("#version:"))
             .enumerate()
         {
             let mut it = line.split_whitespace();
-            if let (Some(a), Some(b)) = (it.next(), it.next()) {
+            if let (Some(a), Some(b), None) = (it.next(), it.next(), it.next()) {
                 let merged = format!("{a}{b}");
                 if !vocab.contains_key(&merged) {
                     return Err(TokenizerError::MissingVocabSymbol(merged));
                 }
                 bpe_ranks.insert((a.to_string(), b.to_string()), rank);
+            } else {
+                return Err(TokenizerError::InvalidMergeLine(line.to_string()));
             }
         }
 
@@ -375,5 +380,20 @@ mod tests {
         assert_eq!(pre_tokenize("a   b"), vec!["a", "  ", " b"]);
         assert_eq!(pre_tokenize("a  "), vec!["a", "  "]);
         assert_eq!(pre_tokenize("a\n b"), vec!["a", "\n", " b"]);
+    }
+
+    #[test]
+    fn hash_prefix_merges_are_not_comments() {
+        let mut vocab = byte_vocab();
+        vocab.insert("##".into(), 256);
+        let tokenizer = Tokenizer::from_assets(vocab, "#version: 0.2\n\n# #\n").unwrap();
+        assert_eq!(tokenizer.encode("##"), vec![256]);
+    }
+
+    #[test]
+    fn malformed_merge_lines_are_reported() {
+        for line in ["a", "a b c"] {
+            assert!(matches!(Tokenizer::from_assets(byte_vocab(), line), Err(TokenizerError::InvalidMergeLine(_))));
+        }
     }
 }
