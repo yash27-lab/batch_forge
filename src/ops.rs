@@ -176,15 +176,17 @@ pub fn attention(
     causal: bool,
     q_offset: usize,
 ) -> Vec<f32> {
-    assert_eq!(q.len(), m * d);
-    assert_eq!(k.len(), seq * d);
-    assert_eq!(v.len(), seq * d);
+    assert!(d > 0, "attention width must be positive");
+    assert!(seq > 0 || m == 0, "non-empty attention queries require keys");
+    assert_eq!(q.len(), checked_elements(m, d));
+    assert_eq!(k.len(), checked_elements(seq, d));
+    assert_eq!(v.len(), checked_elements(seq, d));
     let scale = 1.0 / (d as f32).sqrt();
-    let mut out = vec![0.0f32; m * d];
+    let mut out = vec![0.0f32; checked_elements(m, d)];
     let mut scores = vec![0.0f32; seq];
     for qi in 0..m {
         let limit = if causal {
-            (qi + q_offset + 1).min(seq)
+            qi.saturating_add(q_offset).saturating_add(1).min(seq)
         } else {
             seq
         };
@@ -406,5 +408,11 @@ mod tests {
         for theta in [0.0, -1.0, f32::NAN, f32::INFINITY] {
             assert!(std::panic::catch_unwind(|| rope_inplace(&mut [1.0, 2.0], &[0], 1, 2, theta)).is_err());
         }
+    }
+
+    #[test]
+    fn attention_large_offset_attends_to_all_available_keys() {
+        let out = attention(&[0.0], &[0.0, 0.0], &[2.0, 4.0], 1, 2, 1, true, usize::MAX);
+        assert_eq!(out, vec![3.0]);
     }
 }
