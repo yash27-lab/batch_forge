@@ -102,7 +102,7 @@ impl Mlp {
                 .ok_or_else(|| ModelError::MissingTensor(b_name.clone()))?;
             w.validate()?;
             b.validate()?;
-            if w.shape.len() != 2 {
+            if w.shape.len() != 2 || w.shape.contains(&0) {
                 return Err(ModelError::BadShape {
                     name: w_name,
                     shape: w.shape.clone(),
@@ -263,5 +263,13 @@ mod tests {
             Mlp { layers: Vec::new() }.forward(&CpuBackend, &corrupt),
             Err(ModelError::NoLayers)
         ));
+    }
+
+    #[test]
+    fn checkpoint_rejects_zero_feature_width() {
+        let mut map = HashMap::new();
+        map.insert("layers.0.weight".into(), Tensor::zeros(vec![2, 0]));
+        map.insert("layers.0.bias".into(), Tensor::zeros(vec![2]));
+        assert!(matches!(Mlp::from_tensors(&map), Err(ModelError::BadShape { .. })));
     }
 }
