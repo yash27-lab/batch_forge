@@ -117,7 +117,10 @@ impl Tokenizer {
                 if !vocab.contains_key(&merged) {
                     return Err(TokenizerError::MissingVocabSymbol(merged));
                 }
-                if bpe_ranks.insert((a.to_string(), b.to_string()), rank).is_some() {
+                if bpe_ranks
+                    .insert((a.to_string(), b.to_string()), rank)
+                    .is_some()
+                {
                     return Err(TokenizerError::DuplicateMerge(line.to_string()));
                 }
             } else {
@@ -171,8 +174,15 @@ impl Tokenizer {
     pub fn try_decode_bytes(&self, ids: &[usize]) -> Result<Vec<u8>, TokenizerError> {
         let mut bytes = Vec::new();
         for id in ids {
-            let token = self.decoder.get(id).ok_or(TokenizerError::UnknownTokenId(*id))?;
-            bytes.extend(token.chars().filter_map(|c| self.byte_decoder.get(&c).copied()));
+            let token = self
+                .decoder
+                .get(id)
+                .ok_or(TokenizerError::UnknownTokenId(*id))?;
+            bytes.extend(
+                token
+                    .chars()
+                    .filter_map(|c| self.byte_decoder.get(&c).copied()),
+            );
         }
         Ok(bytes)
     }
@@ -419,7 +429,10 @@ mod tests {
     #[test]
     fn malformed_merge_lines_are_reported() {
         for line in ["a", "a b c"] {
-            assert!(matches!(Tokenizer::from_assets(byte_vocab(), line), Err(TokenizerError::InvalidMergeLine(_))));
+            assert!(matches!(
+                Tokenizer::from_assets(byte_vocab(), line),
+                Err(TokenizerError::InvalidMergeLine(_))
+            ));
         }
     }
 
@@ -427,21 +440,32 @@ mod tests {
     fn duplicate_merges_are_rejected() {
         let mut vocab = byte_vocab();
         vocab.insert("ab".into(), 256);
-        assert!(matches!(Tokenizer::from_assets(vocab, "a b\na b\n"), Err(TokenizerError::DuplicateMerge(_))));
+        assert!(matches!(
+            Tokenizer::from_assets(vocab, "a b\na b\n"),
+            Err(TokenizerError::DuplicateMerge(_))
+        ));
     }
 
     #[test]
     fn missing_merge_operands_are_reported() {
         let mut vocab = byte_vocab();
         vocab.insert("not_presenta".into(), 256);
-        assert!(matches!(Tokenizer::from_assets(vocab, "not_present a"), Err(TokenizerError::MissingVocabSymbol(symbol)) if symbol == "not_present"));
+        assert!(
+            matches!(Tokenizer::from_assets(vocab, "not_present a"), Err(TokenizerError::MissingVocabSymbol(symbol)) if symbol == "not_present")
+        );
     }
 
     #[test]
     fn checked_decode_reports_unknown_ids_and_preserves_bytes() {
         let tokenizer = Tokenizer::from_assets(byte_vocab(), "").unwrap();
-        assert!(matches!(tokenizer.try_decode(&[999]), Err(TokenizerError::UnknownTokenId(999))));
-        assert_eq!(tokenizer.try_decode_bytes(&[0xe2, 0x82, 0xac]).unwrap(), vec![0xe2, 0x82, 0xac]);
+        assert!(matches!(
+            tokenizer.try_decode(&[999]),
+            Err(TokenizerError::UnknownTokenId(999))
+        ));
+        assert_eq!(
+            tokenizer.try_decode_bytes(&[0xe2, 0x82, 0xac]).unwrap(),
+            vec![0xe2, 0x82, 0xac]
+        );
         assert_eq!(tokenizer.try_decode(&[0xe2, 0x82, 0xac]).unwrap(), "€");
     }
 }

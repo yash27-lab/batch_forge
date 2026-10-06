@@ -368,12 +368,20 @@ impl Gpt2 {
         mut on_token: impl FnMut(usize) -> bool,
     ) -> Vec<usize> {
         let mut toks = prompt.to_vec();
-        if max_new == 0 { return toks; }
+        if max_new == 0 {
+            return toks;
+        }
         self.config.validate().expect("invalid GPT-2 configuration");
         sampler.validate().expect("invalid generation sampler");
         assert!(!prompt.is_empty(), "generation requires a non-empty prompt");
-        assert!(eot_token < self.config.vocab_size, "end-of-text ID exceeds GPT-2 vocabulary");
-        assert!(prompt.iter().all(|&token| token < self.config.vocab_size), "prompt ID exceeds GPT-2 vocabulary");
+        assert!(
+            eot_token < self.config.vocab_size,
+            "end-of-text ID exceeds GPT-2 vocabulary"
+        );
+        assert!(
+            prompt.iter().all(|&token| token < self.config.vocab_size),
+            "prompt ID exceeds GPT-2 vocabulary"
+        );
         let n_ctx = self.config.n_ctx;
         let mut rng = Rng::new(sampler.seed);
         for _ in 0..max_new {
@@ -428,12 +436,18 @@ pub struct Sampler {
 impl Sampler {
     /// Greedy (argmax) sampling.
     pub fn greedy() -> Self {
-        Sampler { temperature: 0.0, top_k: 0, seed: 0 }
+        Sampler {
+            temperature: 0.0,
+            top_k: 0,
+            seed: 0,
+        }
     }
 
     pub fn validate(&self) -> Result<(), Gpt2Error> {
         if !self.temperature.is_finite() || self.temperature < 0.0 {
-            return Err(Gpt2Error::InvalidSampling("temperature must be finite and non-negative"));
+            return Err(Gpt2Error::InvalidSampling(
+                "temperature must be finite and non-negative",
+            ));
         }
         Ok(())
     }
@@ -444,7 +458,8 @@ impl Sampler {
     }
 
     fn sample(&self, logits: &[f32], rng: &mut Rng) -> usize {
-        self.sample_checked(logits, rng).expect("invalid token sampling input")
+        self.sample_checked(logits, rng)
+            .expect("invalid token sampling input")
     }
 
     fn sample_checked(&self, logits: &[f32], rng: &mut Rng) -> Result<usize, Gpt2Error> {
@@ -466,10 +481,18 @@ impl Sampler {
             idx.truncate(self.top_k);
             idx.sort_unstable();
         }
-        let max = idx.iter().map(|&i| logits[i]).fold(f32::NEG_INFINITY, f32::max);
-        let mut probs: Vec<f64> = idx.iter().map(|&i| ((f64::from(logits[i]) - f64::from(max)) / f64::from(self.temperature)).exp()).collect();
+        let max = idx
+            .iter()
+            .map(|&i| logits[i])
+            .fold(f32::NEG_INFINITY, f32::max);
+        let mut probs: Vec<f64> = idx
+            .iter()
+            .map(|&i| ((f64::from(logits[i]) - f64::from(max)) / f64::from(self.temperature)).exp())
+            .collect();
         let sum: f64 = probs.iter().sum();
-        for p in &mut probs { *p /= sum; }
+        for p in &mut probs {
+            *p /= sum;
+        }
         Ok(select_probability(&idx, &probs, f64::from(rng.next_f32())))
     }
 }
@@ -478,10 +501,15 @@ fn select_probability(indices: &[usize], probabilities: &[f64], draw: f64) -> us
     let mut cumulative = 0.0;
     for (index, &probability) in probabilities.iter().enumerate() {
         cumulative += probability;
-        if draw < cumulative { return indices[index]; }
+        if draw < cumulative {
+            return indices[index];
+        }
     }
     // Rounding near one must still select a candidate with positive weight.
-    let last = probabilities.iter().rposition(|&p| p > 0.0).expect("sampling has no positive weight");
+    let last = probabilities
+        .iter()
+        .rposition(|&p| p > 0.0)
+        .expect("sampling has no positive weight");
     indices[last]
 }
 
@@ -617,7 +645,13 @@ mod tests {
     #[test]
     fn checked_sampling_rejects_invalid_inputs() {
         for temperature in [f32::NAN, f32::INFINITY, -1.0] {
-            assert!(Sampler { temperature, top_k: 1, seed: 0 }.sample_token(&[0.0]).is_err());
+            assert!(Sampler {
+                temperature,
+                top_k: 1,
+                seed: 0
+            }
+            .sample_token(&[0.0])
+            .is_err());
         }
         assert!(Sampler::greedy().sample_token(&[]).is_err());
         for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
@@ -627,15 +661,26 @@ mod tests {
 
     #[test]
     fn extreme_finite_logits_sample_without_overflow() {
-        let sampler = Sampler { temperature: f32::MIN_POSITIVE, top_k: 0, seed: 42 };
+        let sampler = Sampler {
+            temperature: f32::MIN_POSITIVE,
+            top_k: 0,
+            seed: 42,
+        };
         assert_eq!(sampler.sample_token(&[-f32::MAX, f32::MAX]).unwrap(), 1);
     }
 
     #[test]
     fn top_k_ties_choose_lowest_ids_and_repeat_from_a_seed() {
-        let sampler = Sampler { temperature: 1.0, top_k: 1, seed: 42 };
+        let sampler = Sampler {
+            temperature: 1.0,
+            top_k: 1,
+            seed: 42,
+        };
         assert_eq!(sampler.sample_token(&[0.0, 0.0, 0.0]).unwrap(), 0);
-        let sampler = Sampler { top_k: 2, ..sampler };
+        let sampler = Sampler {
+            top_k: 2,
+            ..sampler
+        };
         let first = sampler.sample_token(&[0.0, 0.0, 0.0]).unwrap();
         assert!(first < 2);
         assert_eq!(first, sampler.sample_token(&[0.0, 0.0, 0.0]).unwrap());
@@ -644,18 +689,39 @@ mod tests {
     #[test]
     fn sampling_boundaries_never_choose_zero_weight() {
         assert_eq!(select_probability(&[10, 20], &[0.0, 1.0], 0.0), 20);
-        assert_eq!(select_probability(&[10, 20, 30], &[0.5, 0.4999999999999999, 0.0], 0.9999999999999999), 20);
+        assert_eq!(
+            select_probability(
+                &[10, 20, 30],
+                &[0.5, 0.4999999999999999, 0.0],
+                0.9999999999999999
+            ),
+            20
+        );
     }
 
     #[test]
     fn zero_token_generation_returns_the_prompt_without_inference() {
-        let tokens = forward_test_model().generate(&crate::model::CpuBackend, &[], 0, &Sampler::greedy(), 1, |_| panic!("unexpected inference"));
+        let tokens = forward_test_model().generate(
+            &crate::model::CpuBackend,
+            &[],
+            0,
+            &Sampler::greedy(),
+            1,
+            |_| panic!("unexpected inference"),
+        );
         assert!(tokens.is_empty());
     }
 
     #[test]
     #[should_panic(expected = "end-of-text ID exceeds")]
     fn generation_rejects_unknown_stop_tokens() {
-        forward_test_model().generate(&crate::model::CpuBackend, &[0], 1, &Sampler::greedy(), 999, |_| {});
+        forward_test_model().generate(
+            &crate::model::CpuBackend,
+            &[0],
+            1,
+            &Sampler::greedy(),
+            999,
+            |_| {},
+        );
     }
 }

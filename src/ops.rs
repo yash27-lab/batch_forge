@@ -11,7 +11,8 @@
 //! * `rope` uses the rotate-half (GPT-NeoX / HF) convention.
 
 fn checked_elements(rows: usize, cols: usize) -> usize {
-    rows.checked_mul(cols).expect("operator dimensions overflow")
+    rows.checked_mul(cols)
+        .expect("operator dimensions overflow")
 }
 
 /// Standard matrix multiply: `A`[m×k] · `B`[k×n] → `C`[m×n] (row-major).
@@ -100,7 +101,10 @@ pub fn layernorm(
     eps: f32,
 ) -> Vec<f32> {
     assert!(d > 0, "normalization width must be positive");
-    assert!(eps.is_finite() && eps >= 0.0, "normalization epsilon must be finite and non-negative");
+    assert!(
+        eps.is_finite() && eps >= 0.0,
+        "normalization epsilon must be finite and non-negative"
+    );
     assert_eq!(x.len(), checked_elements(rows, d));
     assert_eq!(gamma.len(), d);
     assert_eq!(beta.len(), d);
@@ -120,7 +124,10 @@ pub fn layernorm(
 /// Row-wise RMSNorm over the last dimension of size `d`: `y = x / sqrt(mean(x²) + eps) * gamma`.
 pub fn rmsnorm(x: &[f32], gamma: &[f32], rows: usize, d: usize, eps: f32) -> Vec<f32> {
     assert!(d > 0, "normalization width must be positive");
-    assert!(eps.is_finite() && eps >= 0.0, "normalization epsilon must be finite and non-negative");
+    assert!(
+        eps.is_finite() && eps >= 0.0,
+        "normalization epsilon must be finite and non-negative"
+    );
     assert_eq!(x.len(), checked_elements(rows, d));
     assert_eq!(gamma.len(), d);
     let mut out = vec![0.0f32; checked_elements(rows, d)];
@@ -140,7 +147,10 @@ pub fn rmsnorm(x: &[f32], gamma: &[f32], rows: usize, d: usize, eps: f32) -> Vec
 /// `d` must be even.
 pub fn rope_inplace(x: &mut [f32], positions: &[usize], rows: usize, d: usize, theta: f32) {
     assert!(d > 0, "rope head dim must be positive");
-    assert!(theta.is_finite() && theta > 0.0, "rope theta must be finite and positive");
+    assert!(
+        theta.is_finite() && theta > 0.0,
+        "rope theta must be finite and positive"
+    );
     assert_eq!(x.len(), checked_elements(rows, d));
     assert_eq!(positions.len(), rows);
     assert_eq!(d % 2, 0, "rope head dim must be even");
@@ -177,7 +187,10 @@ pub fn attention(
     q_offset: usize,
 ) -> Vec<f32> {
     assert!(d > 0, "attention width must be positive");
-    assert!(seq > 0 || m == 0, "non-empty attention queries require keys");
+    assert!(
+        seq > 0 || m == 0,
+        "non-empty attention queries require keys"
+    );
     assert_eq!(q.len(), checked_elements(m, d));
     assert_eq!(k.len(), checked_elements(seq, d));
     assert_eq!(v.len(), checked_elements(seq, d));
@@ -213,7 +226,10 @@ pub fn attention(
 /// heads laid out contiguously per row; output has the same shape. Query `i`
 /// attends causally over keys `j <= i`. This is the GPT-2 attention reference.
 pub fn mha(q: &[f32], k: &[f32], v: &[f32], seq: usize, heads: usize, head_dim: usize) -> Vec<f32> {
-    assert!(heads > 0 && head_dim > 0, "attention heads and head width must be positive");
+    assert!(
+        heads > 0 && head_dim > 0,
+        "attention heads and head width must be positive"
+    );
     let hd = checked_elements(heads, head_dim);
     assert_eq!(q.len(), checked_elements(seq, hd));
     assert_eq!(k.len(), checked_elements(seq, hd));
@@ -392,7 +408,9 @@ mod tests {
     #[test]
     fn normalization_rejects_invalid_epsilon() {
         for eps in [f32::NAN, f32::INFINITY, -1.0] {
-            assert!(std::panic::catch_unwind(|| layernorm(&[1.0], &[1.0], &[0.0], 1, 1, eps)).is_err());
+            assert!(
+                std::panic::catch_unwind(|| layernorm(&[1.0], &[1.0], &[0.0], 1, 1, eps)).is_err()
+            );
             assert!(std::panic::catch_unwind(|| rmsnorm(&[1.0], &[1.0], 1, 1, eps)).is_err());
         }
     }
@@ -407,7 +425,10 @@ mod tests {
     #[test]
     fn rope_rejects_invalid_frequency_bases() {
         for theta in [0.0, -1.0, f32::NAN, f32::INFINITY] {
-            assert!(std::panic::catch_unwind(|| rope_inplace(&mut [1.0, 2.0], &[0], 1, 2, theta)).is_err());
+            assert!(
+                std::panic::catch_unwind(|| rope_inplace(&mut [1.0, 2.0], &[0], 1, 2, theta))
+                    .is_err()
+            );
         }
     }
 
