@@ -325,6 +325,13 @@ fn category(c: char) -> Cat {
 mod tests {
     use super::*;
 
+    #[test]
+    fn byte_alphabet_is_bijective() {
+        let alphabet = bytes_to_unicode();
+        let symbols: std::collections::HashSet<_> = alphabet.into_iter().collect();
+        assert_eq!(symbols.len(), 256);
+    }
+
     fn maybe_tokenizer() -> Option<Tokenizer> {
         let v = Path::new("models/gpt2/vocab.json");
         let m = Path::new("models/gpt2/merges.txt");
