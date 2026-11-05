@@ -326,6 +326,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn merge_rank_resolves_overlapping_pairs() {
+        let mut vocab = byte_vocab();
+        vocab.insert("ab".into(), 256);
+        vocab.insert("bc".into(), 257);
+        let tok = Tokenizer::from_assets(vocab, "b c\na b\n").unwrap();
+        assert_eq!(tok.encode("abc"), [97, 257]);
+    }
+
+    #[test]
     fn checked_decode_reports_first_unknown_id() {
         let tok = Tokenizer::from_assets(byte_vocab(), "").unwrap();
         assert!(matches!(
