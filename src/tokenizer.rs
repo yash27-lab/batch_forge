@@ -326,6 +326,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn checked_decode_reports_first_unknown_id() {
+        let tok = Tokenizer::from_assets(byte_vocab(), "").unwrap();
+        assert!(matches!(
+            tok.try_decode_bytes(&[97, 256, 257]),
+            Err(TokenizerError::UnknownTokenId(256))
+        ));
+    }
+
+    #[test]
     fn legacy_decode_skips_unknown_ids() {
         let tok = Tokenizer::from_assets(byte_vocab(), "").unwrap();
         assert_eq!(tok.decode(&[97, usize::MAX, 98]), "ab");
