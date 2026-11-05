@@ -326,6 +326,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn empty_input_has_no_tokens() {
+        let tok = Tokenizer::from_assets(byte_vocab(), "").unwrap();
+        assert!(tok.encode("").is_empty());
+        assert_eq!(tok.try_decode(&[]).unwrap(), "");
+    }
+
+    #[test]
     fn all_byte_ids_decode_losslessly() {
         let tok = Tokenizer::from_assets(byte_vocab(), "").unwrap();
         let ids: Vec<_> = (0..256).collect();
