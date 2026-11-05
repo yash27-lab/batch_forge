@@ -326,6 +326,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn multilingual_text_roundtrips_without_assets() {
+        let tok = Tokenizer::from_assets(byte_vocab(), "").unwrap();
+        let text = "résumé 東京 🦀";
+        assert_eq!(tok.try_decode(&tok.encode(text)).unwrap(), text);
+    }
+
+    #[test]
     fn empty_input_has_no_tokens() {
         let tok = Tokenizer::from_assets(byte_vocab(), "").unwrap();
         assert!(tok.encode("").is_empty());
