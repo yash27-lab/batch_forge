@@ -326,6 +326,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn mixed_whitespace_roundtrips_as_bytes() {
+        let tok = Tokenizer::from_assets(byte_vocab(), "").unwrap();
+        let text = "\t  hi\r\n\u{00a0}bye  ";
+        assert_eq!(
+            tok.try_decode_bytes(&tok.encode(text)).unwrap(),
+            text.as_bytes()
+        );
+    }
+
+    #[test]
     fn contractions_keep_suffix_boundaries() {
         assert_eq!(
             pre_tokenize("I'm sure they'll go"),
