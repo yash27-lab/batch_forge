@@ -326,6 +326,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn windows_merge_file_line_endings_work() {
+        let mut vocab = byte_vocab();
+        vocab.insert("ab".into(), 256);
+        let tok = Tokenizer::from_assets(vocab, "#version: 0.2\r\n\r\na b\r\n").unwrap();
+        assert_eq!(tok.encode("ab"), [256]);
+    }
+
+    #[test]
     fn merges_respect_letter_digit_boundaries() {
         let mut vocab = byte_vocab();
         vocab.insert("a1".into(), 256);
