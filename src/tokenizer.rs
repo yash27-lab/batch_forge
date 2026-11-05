@@ -326,6 +326,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn merges_respect_letter_digit_boundaries() {
+        let mut vocab = byte_vocab();
+        vocab.insert("a1".into(), 256);
+        let tok = Tokenizer::from_assets(vocab, "a 1\n").unwrap();
+        assert_eq!(tok.encode("a1"), [97, 49]);
+    }
+
+    #[test]
     fn repeated_pair_merges_do_not_overlap() {
         let mut vocab = byte_vocab();
         vocab.insert("aa".into(), 256);
