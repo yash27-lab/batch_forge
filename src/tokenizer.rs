@@ -326,6 +326,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn merged_pairs_can_be_merged_again() {
+        let mut vocab = byte_vocab();
+        vocab.insert("ab".into(), 256);
+        vocab.insert("abc".into(), 257);
+        let tok = Tokenizer::from_assets(vocab, "a b\nab c\n").unwrap();
+        assert_eq!(tok.encode("abc"), [257]);
+        assert_eq!(tok.try_decode(&[257]).unwrap(), "abc");
+    }
+
+    #[test]
     fn merge_rank_resolves_overlapping_pairs() {
         let mut vocab = byte_vocab();
         vocab.insert("ab".into(), 256);
