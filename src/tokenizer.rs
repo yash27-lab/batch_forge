@@ -326,6 +326,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn legacy_decode_skips_unknown_ids() {
+        let tok = Tokenizer::from_assets(byte_vocab(), "").unwrap();
+        assert_eq!(tok.decode(&[97, usize::MAX, 98]), "ab");
+    }
+
+    #[test]
     fn partial_utf8_bytes_remain_available() {
         let tok = Tokenizer::from_assets(byte_vocab(), "").unwrap();
         assert_eq!(tok.try_decode_bytes(&[0xe2, 0x82]).unwrap(), [0xe2, 0x82]);
