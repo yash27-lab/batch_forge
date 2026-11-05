@@ -325,6 +325,127 @@ fn category(c: char) -> Cat {
 mod tests {
     use super::*;
 
+    #[test]
+    fn mixed_whitespace_roundtrips_as_bytes() {
+        let tok = Tokenizer::from_assets(byte_vocab(), "").unwrap();
+        let text = "\t  hi\r\n\u{00a0}bye  ";
+        assert_eq!(
+            tok.try_decode_bytes(&tok.encode(text)).unwrap(),
+            text.as_bytes()
+        );
+    }
+
+    #[test]
+    fn contractions_keep_suffix_boundaries() {
+        assert_eq!(
+            pre_tokenize("I'm sure they'll go"),
+            ["I", "'m", " sure", " they", "'ll", " go"]
+        );
+    }
+
+    #[test]
+    fn windows_merge_file_line_endings_work() {
+        let mut vocab = byte_vocab();
+        vocab.insert("ab".into(), 256);
+        let tok = Tokenizer::from_assets(vocab, "#version: 0.2\r\n\r\na b\r\n").unwrap();
+        assert_eq!(tok.encode("ab"), [256]);
+    }
+
+    #[test]
+    fn merges_respect_letter_digit_boundaries() {
+        let mut vocab = byte_vocab();
+        vocab.insert("a1".into(), 256);
+        let tok = Tokenizer::from_assets(vocab, "a 1\n").unwrap();
+        assert_eq!(tok.encode("a1"), [97, 49]);
+    }
+
+    #[test]
+    fn repeated_pair_merges_do_not_overlap() {
+        let mut vocab = byte_vocab();
+        vocab.insert("aa".into(), 256);
+        let tok = Tokenizer::from_assets(vocab, "a a\n").unwrap();
+        assert_eq!(tok.encode("aaaaa"), [256, 256, 97]);
+    }
+
+    #[test]
+    fn merged_pairs_can_be_merged_again() {
+        let mut vocab = byte_vocab();
+        vocab.insert("ab".into(), 256);
+        vocab.insert("abc".into(), 257);
+        let tok = Tokenizer::from_assets(vocab, "a b\nab c\n").unwrap();
+        assert_eq!(tok.encode("abc"), [257]);
+        assert_eq!(tok.try_decode(&[257]).unwrap(), "abc");
+    }
+
+    #[test]
+    fn merge_rank_resolves_overlapping_pairs() {
+        let mut vocab = byte_vocab();
+        vocab.insert("ab".into(), 256);
+        vocab.insert("bc".into(), 257);
+        let tok = Tokenizer::from_assets(vocab, "b c\na b\n").unwrap();
+        assert_eq!(tok.encode("abc"), [97, 257]);
+    }
+
+    #[test]
+    fn checked_decode_reports_first_unknown_id() {
+        let tok = Tokenizer::from_assets(byte_vocab(), "").unwrap();
+        assert!(matches!(
+            tok.try_decode_bytes(&[97, 256, 257]),
+            Err(TokenizerError::UnknownTokenId(256))
+        ));
+    }
+
+    #[test]
+    fn legacy_decode_skips_unknown_ids() {
+        let tok = Tokenizer::from_assets(byte_vocab(), "").unwrap();
+        assert_eq!(tok.decode(&[97, usize::MAX, 98]), "ab");
+    }
+
+    #[test]
+    fn partial_utf8_bytes_remain_available() {
+        let tok = Tokenizer::from_assets(byte_vocab(), "").unwrap();
+        assert_eq!(tok.try_decode_bytes(&[0xe2, 0x82]).unwrap(), [0xe2, 0x82]);
+        assert_eq!(tok.try_decode(&[0xe2, 0x82]).unwrap(), "�");
+    }
+
+    #[test]
+    fn embedded_nul_roundtrips() {
+        let tok = Tokenizer::from_assets(byte_vocab(), "").unwrap();
+        assert_eq!(tok.encode("a\0b"), vec![97, 0, 98]);
+        assert_eq!(tok.try_decode(&[97, 0, 98]).unwrap(), "a\0b");
+    }
+
+    #[test]
+    fn multilingual_text_roundtrips_without_assets() {
+        let tok = Tokenizer::from_assets(byte_vocab(), "").unwrap();
+        let text = "résumé 東京 🦀";
+        assert_eq!(tok.try_decode(&tok.encode(text)).unwrap(), text);
+    }
+
+    #[test]
+    fn empty_input_has_no_tokens() {
+        let tok = Tokenizer::from_assets(byte_vocab(), "").unwrap();
+        assert!(tok.encode("").is_empty());
+        assert_eq!(tok.try_decode(&[]).unwrap(), "");
+    }
+
+    #[test]
+    fn all_byte_ids_decode_losslessly() {
+        let tok = Tokenizer::from_assets(byte_vocab(), "").unwrap();
+        let ids: Vec<_> = (0..256).collect();
+        assert_eq!(
+            tok.try_decode_bytes(&ids).unwrap(),
+            (0..=255u8).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn byte_alphabet_is_bijective() {
+        let alphabet = bytes_to_unicode();
+        let symbols: std::collections::HashSet<_> = alphabet.into_iter().collect();
+        assert_eq!(symbols.len(), 256);
+    }
+
     fn maybe_tokenizer() -> Option<Tokenizer> {
         let v = Path::new("models/gpt2/vocab.json");
         let m = Path::new("models/gpt2/merges.txt");
