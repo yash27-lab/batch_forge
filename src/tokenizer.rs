@@ -326,6 +326,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn contractions_keep_suffix_boundaries() {
+        assert_eq!(
+            pre_tokenize("I'm sure they'll go"),
+            ["I", "'m", " sure", " they", "'ll", " go"]
+        );
+    }
+
+    #[test]
     fn windows_merge_file_line_endings_work() {
         let mut vocab = byte_vocab();
         vocab.insert("ab".into(), 256);
