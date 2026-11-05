@@ -326,6 +326,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn all_byte_ids_decode_losslessly() {
+        let tok = Tokenizer::from_assets(byte_vocab(), "").unwrap();
+        let ids: Vec<_> = (0..256).collect();
+        assert_eq!(
+            tok.try_decode_bytes(&ids).unwrap(),
+            (0..=255u8).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn byte_alphabet_is_bijective() {
         let alphabet = bytes_to_unicode();
         let symbols: std::collections::HashSet<_> = alphabet.into_iter().collect();
