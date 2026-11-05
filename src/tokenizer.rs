@@ -326,6 +326,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn embedded_nul_roundtrips() {
+        let tok = Tokenizer::from_assets(byte_vocab(), "").unwrap();
+        assert_eq!(tok.encode("a\0b"), vec![97, 0, 98]);
+        assert_eq!(tok.try_decode(&[97, 0, 98]).unwrap(), "a\0b");
+    }
+
+    #[test]
     fn multilingual_text_roundtrips_without_assets() {
         let tok = Tokenizer::from_assets(byte_vocab(), "").unwrap();
         let text = "résumé 東京 🦀";
