@@ -326,6 +326,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn partial_utf8_bytes_remain_available() {
+        let tok = Tokenizer::from_assets(byte_vocab(), "").unwrap();
+        assert_eq!(tok.try_decode_bytes(&[0xe2, 0x82]).unwrap(), [0xe2, 0x82]);
+        assert_eq!(tok.try_decode(&[0xe2, 0x82]).unwrap(), "�");
+    }
+
+    #[test]
     fn embedded_nul_roundtrips() {
         let tok = Tokenizer::from_assets(byte_vocab(), "").unwrap();
         assert_eq!(tok.encode("a\0b"), vec![97, 0, 98]);
