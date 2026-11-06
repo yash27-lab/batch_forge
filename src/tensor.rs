@@ -240,6 +240,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn non_f32_view_requires_explicit_conversion() {
+        let view = TensorView::new(&[1], DataType::F16, &[0, 0]).unwrap();
+        assert!(matches!(
+            view.to_tensor_f32(),
+            Err(TensorError::NotF32(DataType::F16))
+        ));
+    }
+
+    #[test]
     fn unaligned_view_materializes_little_endian_values() {
         let mut storage = [0u32; 3];
         let bytes = bytemuck::cast_slice_mut::<u32, u8>(&mut storage);
