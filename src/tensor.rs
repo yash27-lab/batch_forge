@@ -240,6 +240,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn empty_view_numel_short_circuits_overflow() {
+        let view = TensorView::new(&[usize::MAX, 2, 0], DataType::F32, &[]).unwrap();
+        assert_eq!(view.numel(), 0);
+        assert!(view.to_tensor_f32().unwrap().data.is_empty());
+    }
+
+    #[test]
     fn test_valid_tensor_view() {
         let data = vec![0u8; 8];
         let view = TensorView::new(&[2, 1], DataType::F32, &data);
