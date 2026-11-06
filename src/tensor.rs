@@ -240,6 +240,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn unaligned_view_materializes_little_endian_values() {
+        let mut storage = [0u32; 3];
+        let bytes = bytemuck::cast_slice_mut::<u32, u8>(&mut storage);
+        bytes[1..5].copy_from_slice(&1.25f32.to_le_bytes());
+        bytes[5..9].copy_from_slice(&(-2.5f32).to_le_bytes());
+        let view = TensorView::new(&[2], DataType::F32, &bytes[1..9]).unwrap();
+        assert!(view.as_slice::<f32>().is_none());
+        assert_eq!(view.to_tensor_f32().unwrap().data, [1.25, -2.5]);
+    }
+
+    #[test]
     fn scalar_view_has_one_element() {
         let bytes = 3.25f32.to_le_bytes();
         let view = TensorView::new(&[], DataType::F32, &bytes).unwrap();
