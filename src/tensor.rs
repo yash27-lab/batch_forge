@@ -87,6 +87,9 @@ impl<'data> TensorView<'data> {
 
     /// Number of elements described by the shape.
     pub fn numel(&self) -> usize {
+        if self.shape.contains(&0) {
+            return 0;
+        }
         self.shape.iter().product()
     }
 
