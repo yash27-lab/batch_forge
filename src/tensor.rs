@@ -87,6 +87,9 @@ impl<'data> TensorView<'data> {
 
     /// Number of elements described by the shape.
     pub fn numel(&self) -> usize {
+        if self.shape.contains(&0) {
+            return 0;
+        }
         self.shape.iter().product()
     }
 
@@ -235,6 +238,43 @@ impl Tensor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn non_f32_view_requires_explicit_conversion() {
+        let view = TensorView::new(&[1], DataType::F16, &[0, 0]).unwrap();
+        assert!(matches!(
+            view.to_tensor_f32(),
+            Err(TensorError::NotF32(DataType::F16))
+        ));
+    }
+
+    #[test]
+    fn unaligned_view_materializes_little_endian_values() {
+        let mut storage = [0u32; 3];
+        let bytes = bytemuck::cast_slice_mut::<u32, u8>(&mut storage);
+        bytes[1..5].copy_from_slice(&1.25f32.to_le_bytes());
+        bytes[5..9].copy_from_slice(&(-2.5f32).to_le_bytes());
+        let view = TensorView::new(&[2], DataType::F32, &bytes[1..9]).unwrap();
+        assert!(view.as_slice::<f32>().is_none());
+        assert_eq!(view.to_tensor_f32().unwrap().data, [1.25, -2.5]);
+    }
+
+    #[test]
+    fn scalar_view_has_one_element() {
+        let bytes = 3.25f32.to_le_bytes();
+        let view = TensorView::new(&[], DataType::F32, &bytes).unwrap();
+        assert_eq!(view.numel(), 1);
+        let owned = view.to_tensor_f32().unwrap();
+        assert!(owned.shape.is_empty());
+        assert_eq!(owned.data, [3.25]);
+    }
+
+    #[test]
+    fn empty_view_numel_short_circuits_overflow() {
+        let view = TensorView::new(&[usize::MAX, 2, 0], DataType::F32, &[]).unwrap();
+        assert_eq!(view.numel(), 0);
+        assert!(view.to_tensor_f32().unwrap().data.is_empty());
+    }
 
     #[test]
     fn test_valid_tensor_view() {
