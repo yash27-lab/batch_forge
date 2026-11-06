@@ -240,6 +240,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn scalar_view_has_one_element() {
+        let bytes = 3.25f32.to_le_bytes();
+        let view = TensorView::new(&[], DataType::F32, &bytes).unwrap();
+        assert_eq!(view.numel(), 1);
+        let owned = view.to_tensor_f32().unwrap();
+        assert!(owned.shape.is_empty());
+        assert_eq!(owned.data, [3.25]);
+    }
+
+    #[test]
     fn empty_view_numel_short_circuits_overflow() {
         let view = TensorView::new(&[usize::MAX, 2, 0], DataType::F32, &[]).unwrap();
         assert_eq!(view.numel(), 0);
