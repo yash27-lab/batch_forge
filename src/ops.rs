@@ -295,6 +295,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn linear_uses_distinct_batch_rows() {
+        assert_eq!(
+            linear(&[1.0, 2.0, -1.0, 3.0], &[2.0, -1.0], &[5.0], 2, 2, 1),
+            [5.0, 0.0]
+        );
+    }
+
+    #[test]
     fn linear_repeats_bias_without_features() {
         assert_eq!(
             linear(&[], &[], &[2.0, -3.0], 2, 0, 2),
