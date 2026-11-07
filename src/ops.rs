@@ -295,6 +295,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn layernorm_normalizes_rows_independently() {
+        approx(
+            &layernorm(&[1.0, 3.0, 100.0, 102.0], &[1.0; 2], &[0.0; 2], 2, 2, 0.0),
+            &[-1.0, 1.0, -1.0, 1.0],
+            1e-6,
+        );
+    }
+
+    #[test]
     fn layernorm_constant_rows_return_beta() {
         assert_eq!(
             layernorm(
