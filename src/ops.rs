@@ -294,6 +294,11 @@ pub fn dequantize_int8(q: &[i8], scales: &[f32], rows: usize, cols: usize) -> Ve
 mod tests {
     use super::*;
 
+    #[test]
+    fn matmul_zero_inner_dimension() {
+        assert_eq!(matmul(&[], &[], 2, 0, 3), [0.0; 6]);
+    }
+
     fn approx(a: &[f32], b: &[f32], tol: f32) {
         assert_eq!(a.len(), b.len());
         for (x, y) in a.iter().zip(b) {
