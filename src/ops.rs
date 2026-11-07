@@ -295,6 +295,12 @@ mod tests {
     use super::*;
 
     #[test]
+    #[should_panic(expected = "operator dimensions overflow")]
+    fn linear_rejects_output_overflow() {
+        linear(&[], &[], &[0.0; 2], usize::MAX, 0, 2);
+    }
+
+    #[test]
     fn linear_empty_batch() {
         assert!(linear(&[], &[2.0, 1.0], &[4.0], 0, 2, 1).is_empty());
     }
