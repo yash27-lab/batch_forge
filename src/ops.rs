@@ -295,6 +295,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn softmax_single_large_logit() {
+        let mut x = [f32::MAX];
+        softmax_inplace(&mut x);
+        assert_eq!(x, [1.0]);
+    }
+
+    #[test]
     fn softmax_empty_is_noop() {
         let mut empty = [];
         softmax_inplace(&mut empty);
