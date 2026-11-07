@@ -295,6 +295,12 @@ mod tests {
     use super::*;
 
     #[test]
+    #[should_panic(expected = "non-empty attention queries require keys")]
+    fn attention_rejects_queries_without_keys() {
+        attention(&[1.0], &[], &[], 1, 0, 1, false, 0);
+    }
+
+    #[test]
     fn attention_empty_queries_allow_existing_keys() {
         assert!(attention(&[], &[1.0, 2.0], &[3.0, 4.0], 0, 2, 1, true, 0).is_empty());
     }
