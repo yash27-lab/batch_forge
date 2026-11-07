@@ -295,6 +295,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn mha_keeps_head_values_separate() {
+        approx(
+            &mha(&[0.0; 4], &[0.0; 4], &[2.0, 20.0, 6.0, 60.0], 2, 2, 1),
+            &[2.0, 20.0, 4.0, 40.0],
+            1e-6,
+        );
+    }
+
+    #[test]
     fn mha_empty_sequence_accepts_multiple_heads() {
         assert!(mha(&[], &[], &[], 0, 4, 2).is_empty());
     }
