@@ -295,6 +295,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn rope_empty_batch_is_noop() {
+        let mut x = [];
+        rope_inplace(&mut x, &[], 0, 2, 10000.0);
+        assert!(x.is_empty());
+    }
+
+    #[test]
     fn rope_uses_each_rows_absolute_position() {
         let mut x = [1.0, 0.0, 1.0, 0.0];
         rope_inplace(&mut x, &[0, 1], 2, 2, 10000.0);
