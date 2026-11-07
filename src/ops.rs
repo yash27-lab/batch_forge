@@ -295,6 +295,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn int8_dequantization_uses_independent_row_scales() {
+        assert_eq!(
+            dequantize_int8(&[-128, 127, -128, 127], &[0.5, 2.0], 2, 2),
+            [-64.0, 63.5, -256.0, 254.0]
+        );
+    }
+
+    #[test]
     fn mha_keeps_head_values_separate() {
         approx(
             &mha(&[0.0; 4], &[0.0; 4], &[2.0, 20.0, 6.0, 60.0], 2, 2, 1),
