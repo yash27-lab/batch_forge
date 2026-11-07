@@ -295,6 +295,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn attention_offset_applies_to_each_query() {
+        approx(
+            &attention(&[0.0, 0.0], &[0.0; 3], &[2.0, 4.0, 6.0], 2, 3, 1, true, 1),
+            &[3.0, 4.0],
+            1e-6,
+        );
+    }
+
+    #[test]
     #[should_panic(expected = "non-empty attention queries require keys")]
     fn attention_rejects_queries_without_keys() {
         attention(&[1.0], &[], &[], 1, 0, 1, false, 0);
