@@ -295,6 +295,12 @@ mod tests {
     use super::*;
 
     #[test]
+    #[should_panic(expected = "B has wrong length")]
+    fn matmul_rejects_short_right_buffer() {
+        matmul(&[1.0, 2.0], &[1.0], 1, 2, 1);
+    }
+
+    #[test]
     #[should_panic(expected = "A has wrong length")]
     fn matmul_rejects_short_left_buffer() {
         matmul(&[1.0], &[1.0, 2.0], 1, 2, 1);
