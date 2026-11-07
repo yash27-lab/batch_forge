@@ -1,6 +1,21 @@
 #include <metal_stdlib>
 using namespace metal;
 
+// GELU (tanh approximation), matching ops::gelu / jax.nn.gelu(approximate=True).
+//
+// The tanh argument is clamped: Metal's fast-math `tanh` evaluates exp(2·arg),
+// which overflows to inf (→ NaN) once the argument is large (GPT-2 activations
+// can drive it past ~70). tanh has already saturated to ±1 by |arg|=15, so the
+// clamp is numerically exact in f32 while avoiding the overflow.
+inline float gelu_approx(float x) {
+    float inner = 0.7978845608f * (x + 0.044715f * x * x * x);
+    inner = clamp(inner, -15.0f, 15.0f);
+    return 0.5f * x * (1.0f + tanh(inner));
+}
+
+// ---------------------------------------------------------------------------
+// Dense matmul: C[M,N] = A[M,K] * B[K,N]  (row-major, naive one-thread-per-output)
+// ---------------------------------------------------------------------------
 kernel void matmul(
     device const float* A [[buffer(0)]],
     device const float* B [[buffer(1)]],
@@ -12,9 +27,8 @@ kernel void matmul(
 ) {
     uint row = gid.y;
     uint col = gid.x;
-
     if (row < M && col < N) {
-        float sum = 0.0;
+        float sum = 0.0f;
         for (uint i = 0; i < K; ++i) {
             sum += A[row * K + i] * B[i * N + col];
         }
@@ -22,6 +36,34 @@ kernel void matmul(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Linear (equinox.nn.Linear): Y[N,Out] = X[N,In] * W[Out,In]^T + B[Out]
+// Avoids an explicit weight transpose by indexing W row-major as [Out,In].
+// ---------------------------------------------------------------------------
+kernel void linear(
+    device const float* X [[buffer(0)]],
+    device const float* W [[buffer(1)]],
+    device const float* Bias [[buffer(2)]],
+    device float* Y [[buffer(3)]],
+    constant uint& Rows [[buffer(4)]],
+    constant uint& In [[buffer(5)]],
+    constant uint& Out [[buffer(6)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint row = gid.y;
+    uint o = gid.x;
+    if (row < Rows && o < Out) {
+        float acc = Bias[o];
+        for (uint i = 0; i < In; ++i) {
+            acc += X[row * In + i] * W[o * In + i];
+        }
+        Y[row * Out + o] = acc;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Weight-only INT8 matmul: C = (A_int8 * per-row scale) * B
+// ---------------------------------------------------------------------------
 kernel void quant_matmul(
     device const char* A_int8 [[buffer(0)]],
     device const float* B_f32 [[buffer(1)]],
@@ -34,9 +76,8 @@ kernel void quant_matmul(
 ) {
     uint row = gid.y;
     uint col = gid.x;
-
     if (row < M && col < N) {
-        float sum = 0.0;
+        float sum = 0.0f;
         float scale = A_scales[row];
         for (uint i = 0; i < K; ++i) {
             float a_val = (float)A_int8[row * K + i] * scale;
@@ -46,75 +87,268 @@ kernel void quant_matmul(
     }
 }
 
-// Fused Attention with KV-Cache support
+// Elementwise GELU.
+kernel void gelu_forward(
+    device const float* X [[buffer(0)]],
+    device float* Y [[buffer(1)]],
+    constant uint& N [[buffer(2)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid < N) {
+        Y[gid] = gelu_approx(X[gid]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Single-head attention with KV-cache.
+//
+// One thread per query row. The previous version recomputed the full Q·K dot
+// product inside the output-dimension loop, making it O(M·S·D^2). This computes
+// each score once per key, so the cost is O(M·S·D). Causal masking restricts
+// query row i to keys j <= i + QOffset (QOffset = absolute position of the first
+// new query, i.e. the cache length before this step).
+// ---------------------------------------------------------------------------
 kernel void kv_attention(
-    device const float* Q [[buffer(0)]],      // M x D (Queries for current step)
-    device const float* K_cache [[buffer(1)]], // MaxSeq x D (Keys Cache)
-    device const float* V_cache [[buffer(2)]], // MaxSeq x D (Values Cache)
-    device float* O [[buffer(3)]],             // M x D (Output)
-    constant uint& M [[buffer(4)]],            // Current query length (usually 1 for generation)
-    constant uint& CurSeqLen [[buffer(5)]],    // Current total sequence length including new tokens
-    constant uint& D [[buffer(6)]],            // Head Dimension
+    device const float* Q [[buffer(0)]],       // M x D
+    device const float* K_cache [[buffer(1)]], // CurSeqLen x D
+    device const float* V_cache [[buffer(2)]], // CurSeqLen x D
+    device float* O [[buffer(3)]],             // M x D
+    constant uint& M [[buffer(4)]],
+    constant uint& CurSeqLen [[buffer(5)]],
+    constant uint& D [[buffer(6)]],
+    constant uint& Causal [[buffer(7)]],
+    constant uint& QOffset [[buffer(8)]],
     uint gid [[thread_position_in_grid]]
 ) {
     uint q_idx = gid;
     if (q_idx >= M) return;
 
-    float max_score = -1e9;
-    
-    // Iterate over the cached keys up to the current sequence length
-    for (uint k_idx = 0; k_idx < CurSeqLen; ++k_idx) {
-        float score = 0.0;
-        for (uint d = 0; d < D; ++d) {
-            score += Q[q_idx * D + d] * K_cache[k_idx * D + d];
-        }
-        score /= sqrt((float)D);
-        max_score = max(max_score, score);
+    uint limit = CurSeqLen;
+    if (Causal != 0u) {
+        uint c = q_idx + QOffset + 1u;
+        limit = (c < CurSeqLen) ? c : CurSeqLen;
     }
-    
-    float sum_exp = 0.0;
-    for (uint k_idx = 0; k_idx < CurSeqLen; ++k_idx) {
-        float score = 0.0;
-        for (uint d = 0; d < D; ++d) {
-            score += Q[q_idx * D + d] * K_cache[k_idx * D + d];
-        }
-        score /= sqrt((float)D);
-        sum_exp += exp(score - max_score);
+
+    // Output starts at zero; if nothing is visible it stays zero.
+    for (uint d = 0; d < D; ++d) O[q_idx * D + d] = 0.0f;
+    if (limit == 0u) return;
+
+    float inv_sqrt_d = rsqrt((float)D);
+
+    // Pass 1: running max for numerical stability.
+    float max_score = -INFINITY;
+    for (uint k = 0; k < limit; ++k) {
+        float s = 0.0f;
+        for (uint d = 0; d < D; ++d) s += Q[q_idx * D + d] * K_cache[k * D + d];
+        s *= inv_sqrt_d;
+        max_score = max(max_score, s);
     }
-    
-    for (uint d = 0; d < D; ++d) {
-        float out_val = 0.0;
-        for (uint k_idx = 0; k_idx < CurSeqLen; ++k_idx) {
-            float score = 0.0;
-            for (uint d_inner = 0; d_inner < D; ++d_inner) {
-                score += Q[q_idx * D + d_inner] * K_cache[k_idx * D + d_inner];
-            }
-            score /= sqrt((float)D);
-            float weight = exp(score - max_score) / sum_exp;
-            out_val += weight * V_cache[k_idx * D + d];
-        }
-        O[q_idx * D + d] = out_val;
+
+    // Pass 2: denominator.
+    float sum_exp = 0.0f;
+    for (uint k = 0; k < limit; ++k) {
+        float s = 0.0f;
+        for (uint d = 0; d < D; ++d) s += Q[q_idx * D + d] * K_cache[k * D + d];
+        s *= inv_sqrt_d;
+        sum_exp += exp(s - max_score);
+    }
+
+    // Pass 3: weighted sum of V (score computed once per key, not per dim).
+    for (uint k = 0; k < limit; ++k) {
+        float s = 0.0f;
+        for (uint d = 0; d < D; ++d) s += Q[q_idx * D + d] * K_cache[k * D + d];
+        s *= inv_sqrt_d;
+        float w = exp(s - max_score) / sum_exp;
+        for (uint d = 0; d < D; ++d) O[q_idx * D + d] += w * V_cache[k * D + d];
     }
 }
 
-// Helper kernel to update KV-Cache with new tokens
+// Append M new tokens to the KV cache at row `Offset`.
 kernel void update_kv_cache(
     device const float* NewK [[buffer(0)]],   // M x D
     device const float* NewV [[buffer(1)]],   // M x D
     device float* K_cache [[buffer(2)]],      // MaxSeq x D
     device float* V_cache [[buffer(3)]],      // MaxSeq x D
-    constant uint& M [[buffer(4)]],           // New tokens length
-    constant uint& Offset [[buffer(5)]],      // Starting position in cache
-    constant uint& D [[buffer(6)]],           // Head Dimension
+    constant uint& M [[buffer(4)]],
+    constant uint& Offset [[buffer(5)]],
+    constant uint& D [[buffer(6)]],
     uint2 gid [[thread_position_in_grid]]
 ) {
     uint tok_idx = gid.x;
     uint d_idx = gid.y;
-
     if (tok_idx < M && d_idx < D) {
         uint cache_pos = (tok_idx + Offset) * D + d_idx;
         uint input_pos = tok_idx * D + d_idx;
         K_cache[cache_pos] = NewK[input_pos];
         V_cache[cache_pos] = NewV[input_pos];
+    }
+}
+
+// Row-wise LayerNorm over the last dimension.
+kernel void layernorm(
+    device const float* X [[buffer(0)]],
+    device const float* Gamma [[buffer(1)]],
+    device const float* Beta [[buffer(2)]],
+    device float* Y [[buffer(3)]],
+    constant uint& Rows [[buffer(4)]],
+    constant uint& D [[buffer(5)]],
+    constant float& Eps [[buffer(6)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    uint r = gid;
+    if (r >= Rows) return;
+    float mean = 0.0f;
+    for (uint c = 0; c < D; ++c) mean += X[r * D + c];
+    mean /= (float)D;
+    float var = 0.0f;
+    for (uint c = 0; c < D; ++c) {
+        float diff = X[r * D + c] - mean;
+        var += diff * diff;
+    }
+    var /= (float)D;
+    float inv_std = rsqrt(var + Eps);
+    for (uint c = 0; c < D; ++c) {
+        Y[r * D + c] = (X[r * D + c] - mean) * inv_std * Gamma[c] + Beta[c];
+    }
+}
+
+// Row-wise RMSNorm over the last dimension.
+kernel void rmsnorm(
+    device const float* X [[buffer(0)]],
+    device const float* Gamma [[buffer(1)]],
+    device float* Y [[buffer(2)]],
+    constant uint& Rows [[buffer(3)]],
+    constant uint& D [[buffer(4)]],
+    constant float& Eps [[buffer(5)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    uint r = gid;
+    if (r >= Rows) return;
+    float ms = 0.0f;
+    for (uint c = 0; c < D; ++c) ms += X[r * D + c] * X[r * D + c];
+    ms /= (float)D;
+    float inv = rsqrt(ms + Eps);
+    for (uint c = 0; c < D; ++c) {
+        Y[r * D + c] = X[r * D + c] * inv * Gamma[c];
+    }
+}
+
+// Rotary position embedding (rotate-half / GPT-NeoX convention), applied in place.
+kernel void rope(
+    device float* X [[buffer(0)]],
+    device const uint* Positions [[buffer(1)]],
+    constant uint& Rows [[buffer(2)]],
+    constant uint& D [[buffer(3)]],
+    constant float& Theta [[buffer(4)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    uint r = gid;
+    if (r >= Rows) return;
+    uint half_d = D / 2;
+    float pos = (float)Positions[r];
+    for (uint i = 0; i < half_d; ++i) {
+        float inv_freq = pow(Theta, -2.0f * (float)i / (float)D);
+        float angle = pos * inv_freq;
+        float s = sin(angle);
+        float c = cos(angle);
+        float x1 = X[r * D + i];
+        float x2 = X[r * D + i + half_d];
+        X[r * D + i] = x1 * c - x2 * s;
+        X[r * D + i + half_d] = x2 * c + x1 * s;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tiled matmul: C[M,N] = A[M,K] * B[K,N] using threadgroup shared memory.
+//
+// Each 16x16 threadgroup cooperatively stages tiles of A and B into fast
+// on-chip memory, so each global element is read once per tile instead of
+// once per output. This is the standard shared-memory GEMM and is many times
+// faster than the naive one-thread-per-output `matmul` above.
+// ---------------------------------------------------------------------------
+#define TILE 16
+kernel void matmul_tiled(
+    device const float* A [[buffer(0)]],
+    device const float* B [[buffer(1)]],
+    device float* C [[buffer(2)]],
+    constant uint& M [[buffer(3)]],
+    constant uint& N [[buffer(4)]],
+    constant uint& K [[buffer(5)]],
+    uint2 tid [[thread_position_in_threadgroup]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    threadgroup float As[TILE][TILE];
+    threadgroup float Bs[TILE][TILE];
+
+    uint row = gid.y;
+    uint col = gid.x;
+    float acc = 0.0f;
+
+    uint n_tiles = (K + TILE - 1) / TILE;
+    for (uint t = 0; t < n_tiles; ++t) {
+        uint a_col = t * TILE + tid.x;
+        uint b_row = t * TILE + tid.y;
+        As[tid.y][tid.x] = (row < M && a_col < K) ? A[row * K + a_col] : 0.0f;
+        Bs[tid.y][tid.x] = (b_row < K && col < N) ? B[b_row * N + col] : 0.0f;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        for (uint k = 0; k < TILE; ++k) {
+            acc += As[tid.y][k] * Bs[k][tid.x];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    if (row < M && col < N) {
+        C[row * N + col] = acc;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Multi-head causal self-attention.
+//
+// Q/K/V are [S, H*Dh] (heads laid out contiguously per row). One thread handles
+// one (head, query) pair, attending causally over keys j <= query. Output is
+// [S, H*Dh]. This is what powers the GPT-2 attention blocks.
+// ---------------------------------------------------------------------------
+kernel void mha(
+    device const float* Q [[buffer(0)]],
+    device const float* K [[buffer(1)]],
+    device const float* V [[buffer(2)]],
+    device float* O [[buffer(3)]],
+    constant uint& S [[buffer(4)]],   // sequence length
+    constant uint& H [[buffer(5)]],   // number of heads
+    constant uint& Dh [[buffer(6)]],  // head dimension
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint qpos = gid.x;
+    uint head = gid.y;
+    if (qpos >= S || head >= H) return;
+
+    uint HD = H * Dh;
+    uint base = head * Dh;
+    float scale = rsqrt((float)Dh);
+
+    // Pass 1: max logit over visible keys (causal: k <= qpos).
+    float max_s = -INFINITY;
+    for (uint k = 0; k <= qpos; ++k) {
+        float s = 0.0f;
+        for (uint d = 0; d < Dh; ++d) s += Q[qpos * HD + base + d] * K[k * HD + base + d];
+        s *= scale;
+        max_s = max(max_s, s);
+    }
+    // Pass 2: softmax denominator.
+    float sum = 0.0f;
+    for (uint k = 0; k <= qpos; ++k) {
+        float s = 0.0f;
+        for (uint d = 0; d < Dh; ++d) s += Q[qpos * HD + base + d] * K[k * HD + base + d];
+        sum += exp(s * scale - max_s);
+    }
+    // Pass 3: weighted sum of V.
+    for (uint d = 0; d < Dh; ++d) O[qpos * HD + base + d] = 0.0f;
+    for (uint k = 0; k <= qpos; ++k) {
+        float s = 0.0f;
+        for (uint d = 0; d < Dh; ++d) s += Q[qpos * HD + base + d] * K[k * HD + base + d];
+        float w = exp(s * scale - max_s) / sum;
+        for (uint d = 0; d < Dh; ++d) O[qpos * HD + base + d] += w * V[k * HD + base + d];
     }
 }
