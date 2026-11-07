@@ -295,6 +295,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn linear_empty_batch() {
+        assert!(linear(&[], &[2.0, 1.0], &[4.0], 0, 2, 1).is_empty());
+    }
+
+    #[test]
     fn linear_uses_distinct_batch_rows() {
         assert_eq!(
             linear(&[1.0, 2.0, -1.0, 3.0], &[2.0, -1.0], &[5.0], 2, 2, 1),
