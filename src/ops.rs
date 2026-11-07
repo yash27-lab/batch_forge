@@ -245,6 +245,9 @@ pub fn mha(q: &[f32], k: &[f32], v: &[f32], seq: usize, heads: usize, head_dim: 
     assert_eq!(v.len(), checked_elements(seq, hd));
     let scale = 1.0 / (head_dim as f32).sqrt();
     let mut out = vec![0.0f32; checked_elements(seq, hd)];
+    if out.is_empty() {
+        return out;
+    }
     let mut scores = vec![0.0f32; seq];
     for h in 0..heads {
         let base = h * head_dim;
