@@ -295,6 +295,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn linear_repeats_bias_without_features() {
+        assert_eq!(
+            linear(&[], &[], &[2.0, -3.0], 2, 0, 2),
+            [2.0, -3.0, 2.0, -3.0]
+        );
+    }
+
+    #[test]
     #[should_panic(expected = "B has wrong length")]
     fn matmul_rejects_short_right_buffer() {
         matmul(&[1.0, 2.0], &[1.0], 1, 2, 1);
