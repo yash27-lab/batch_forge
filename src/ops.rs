@@ -202,6 +202,9 @@ pub fn attention(
     assert_eq!(v.len(), checked_elements(seq, d));
     let scale = 1.0 / (d as f32).sqrt();
     let mut out = vec![0.0f32; checked_elements(m, d)];
+    if out.is_empty() {
+        return out;
+    }
     let mut scores = vec![0.0f32; seq];
     for qi in 0..m {
         let limit = if causal {
