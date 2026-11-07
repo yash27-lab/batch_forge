@@ -295,6 +295,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn gelu_inplace_matches_scalar() {
+        let input = [-3.0, -1.0, 0.0, 1.0, 3.0];
+        let mut actual = input;
+        gelu_inplace(&mut actual);
+        assert_eq!(actual, input.map(gelu));
+    }
+
+    #[test]
     fn softmax_extreme_finite_range() {
         let mut x = [f32::MIN, f32::MAX];
         softmax_inplace(&mut x);
