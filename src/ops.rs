@@ -295,6 +295,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn softmax_translation_invariance() {
+        let mut a = [-1.0, 0.0, 2.0];
+        let mut b = [999.0, 1000.0, 1002.0];
+        softmax_inplace(&mut a);
+        softmax_inplace(&mut b);
+        approx(&a, &b, 1e-7);
+    }
+
+    #[test]
     fn softmax_single_large_logit() {
         let mut x = [f32::MAX];
         softmax_inplace(&mut x);
