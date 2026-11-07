@@ -295,6 +295,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn softmax_empty_is_noop() {
+        let mut empty = [];
+        softmax_inplace(&mut empty);
+        assert!(empty.is_empty());
+    }
+
+    #[test]
     #[should_panic(expected = "operator dimensions overflow")]
     fn linear_rejects_output_overflow() {
         linear(&[], &[], &[0.0; 2], usize::MAX, 0, 2);
