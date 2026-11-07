@@ -202,6 +202,9 @@ pub fn attention(
     assert_eq!(v.len(), checked_elements(seq, d));
     let scale = 1.0 / (d as f32).sqrt();
     let mut out = vec![0.0f32; checked_elements(m, d)];
+    if out.is_empty() {
+        return out;
+    }
     let mut scores = vec![0.0f32; seq];
     for qi in 0..m {
         let limit = if causal {
@@ -242,6 +245,9 @@ pub fn mha(q: &[f32], k: &[f32], v: &[f32], seq: usize, heads: usize, head_dim: 
     assert_eq!(v.len(), checked_elements(seq, hd));
     let scale = 1.0 / (head_dim as f32).sqrt();
     let mut out = vec![0.0f32; checked_elements(seq, hd)];
+    if out.is_empty() {
+        return out;
+    }
     let mut scores = vec![0.0f32; seq];
     for h in 0..heads {
         let base = h * head_dim;
@@ -287,6 +293,223 @@ pub fn dequantize_int8(q: &[i8], scales: &[f32], rows: usize, cols: usize) -> Ve
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn int8_dequantization_uses_independent_row_scales() {
+        assert_eq!(
+            dequantize_int8(&[-128, 127, -128, 127], &[0.5, 2.0], 2, 2),
+            [-64.0, 63.5, -256.0, 254.0]
+        );
+    }
+
+    #[test]
+    fn mha_keeps_head_values_separate() {
+        approx(
+            &mha(&[0.0; 4], &[0.0; 4], &[2.0, 20.0, 6.0, 60.0], 2, 2, 1),
+            &[2.0, 20.0, 4.0, 40.0],
+            1e-6,
+        );
+    }
+
+    #[test]
+    fn mha_empty_sequence_accepts_multiple_heads() {
+        assert!(mha(&[], &[], &[], 0, 4, 2).is_empty());
+    }
+
+    #[test]
+    fn attention_noncausal_ignores_offset() {
+        let q = [0.0];
+        let k = [0.0; 2];
+        let v = [2.0, 6.0];
+        assert_eq!(
+            attention(&q, &k, &v, 1, 2, 1, false, 0),
+            attention(&q, &k, &v, 1, 2, 1, false, usize::MAX)
+        );
+    }
+
+    #[test]
+    fn attention_offset_applies_to_each_query() {
+        approx(
+            &attention(&[0.0, 0.0], &[0.0; 3], &[2.0, 4.0, 6.0], 2, 3, 1, true, 1),
+            &[3.0, 4.0],
+            1e-6,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "non-empty attention queries require keys")]
+    fn attention_rejects_queries_without_keys() {
+        attention(&[1.0], &[], &[], 1, 0, 1, false, 0);
+    }
+
+    #[test]
+    fn attention_empty_queries_allow_existing_keys() {
+        assert!(attention(&[], &[1.0, 2.0], &[3.0, 4.0], 0, 2, 1, true, 0).is_empty());
+    }
+
+    #[test]
+    fn rope_empty_batch_is_noop() {
+        let mut x = [];
+        rope_inplace(&mut x, &[], 0, 2, 10000.0);
+        assert!(x.is_empty());
+    }
+
+    #[test]
+    fn rope_uses_each_rows_absolute_position() {
+        let mut x = [1.0, 0.0, 1.0, 0.0];
+        rope_inplace(&mut x, &[0, 1], 2, 2, 10000.0);
+        approx(&x, &[1.0, 0.0, 1.0f32.cos(), 1.0f32.sin()], 1e-6);
+    }
+
+    #[test]
+    #[should_panic(expected = "rope head dim must be even")]
+    fn rope_rejects_odd_head_width() {
+        rope_inplace(&mut [0.0; 3], &[0], 1, 3, 10000.0);
+    }
+
+    #[test]
+    fn rmsnorm_applies_per_feature_gamma() {
+        approx(
+            &rmsnorm(&[2.0, -2.0], &[3.0, 4.0], 1, 2, 0.0),
+            &[3.0, -4.0],
+            1e-6,
+        );
+    }
+
+    #[test]
+    fn rmsnorm_zero_row_with_epsilon() {
+        assert_eq!(rmsnorm(&[0.0, 0.0], &[1.0, 2.0], 1, 2, 1e-5), [0.0, 0.0]);
+    }
+
+    #[test]
+    fn layernorm_normalizes_rows_independently() {
+        approx(
+            &layernorm(&[1.0, 3.0, 100.0, 102.0], &[1.0; 2], &[0.0; 2], 2, 2, 0.0),
+            &[-1.0, 1.0, -1.0, 1.0],
+            1e-6,
+        );
+    }
+
+    #[test]
+    fn layernorm_constant_rows_return_beta() {
+        assert_eq!(
+            layernorm(
+                &[3.0, 3.0, -8.0, -8.0],
+                &[2.0, 4.0],
+                &[7.0, -1.0],
+                2,
+                2,
+                1e-5
+            ),
+            [7.0, -1.0, 7.0, -1.0]
+        );
+    }
+
+    #[test]
+    fn silu_positive_and_negative_values() {
+        let x = 1.0f32;
+        approx(
+            &[silu(x), silu(-x), silu(0.0)],
+            &[0.731_058_6, -0.268_941_43, 0.0],
+            1e-6,
+        );
+    }
+
+    #[test]
+    fn gelu_inplace_matches_scalar() {
+        let input = [-3.0, -1.0, 0.0, 1.0, 3.0];
+        let mut actual = input;
+        gelu_inplace(&mut actual);
+        assert_eq!(actual, input.map(gelu));
+    }
+
+    #[test]
+    fn softmax_extreme_finite_range() {
+        let mut x = [f32::MIN, f32::MAX];
+        softmax_inplace(&mut x);
+        assert_eq!(x, [0.0, 1.0]);
+    }
+
+    #[test]
+    fn softmax_translation_invariance() {
+        let mut a = [-1.0, 0.0, 2.0];
+        let mut b = [999.0, 1000.0, 1002.0];
+        softmax_inplace(&mut a);
+        softmax_inplace(&mut b);
+        approx(&a, &b, 1e-7);
+    }
+
+    #[test]
+    fn softmax_single_large_logit() {
+        let mut x = [f32::MAX];
+        softmax_inplace(&mut x);
+        assert_eq!(x, [1.0]);
+    }
+
+    #[test]
+    fn softmax_empty_is_noop() {
+        let mut empty = [];
+        softmax_inplace(&mut empty);
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "operator dimensions overflow")]
+    fn linear_rejects_output_overflow() {
+        linear(&[], &[], &[0.0; 2], usize::MAX, 0, 2);
+    }
+
+    #[test]
+    fn linear_empty_batch() {
+        assert!(linear(&[], &[2.0, 1.0], &[4.0], 0, 2, 1).is_empty());
+    }
+
+    #[test]
+    fn linear_uses_distinct_batch_rows() {
+        assert_eq!(
+            linear(&[1.0, 2.0, -1.0, 3.0], &[2.0, -1.0], &[5.0], 2, 2, 1),
+            [5.0, 0.0]
+        );
+    }
+
+    #[test]
+    fn linear_repeats_bias_without_features() {
+        assert_eq!(
+            linear(&[], &[], &[2.0, -3.0], 2, 0, 2),
+            [2.0, -3.0, 2.0, -3.0]
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "B has wrong length")]
+    fn matmul_rejects_short_right_buffer() {
+        matmul(&[1.0, 2.0], &[1.0], 1, 2, 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "A has wrong length")]
+    fn matmul_rejects_short_left_buffer() {
+        matmul(&[1.0], &[1.0, 2.0], 1, 2, 1);
+    }
+
+    #[test]
+    fn matmul_rectangular_row_major() {
+        assert_eq!(
+            matmul(
+                &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+                &[1.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+                2,
+                3,
+                2
+            ),
+            [4.0, 5.0, 10.0, 11.0]
+        );
+    }
+
+    #[test]
+    fn matmul_zero_inner_dimension() {
+        assert_eq!(matmul(&[], &[], 2, 0, 3), [0.0; 6]);
+    }
 
     fn approx(a: &[f32], b: &[f32], tol: f32) {
         assert_eq!(a.len(), b.len());
