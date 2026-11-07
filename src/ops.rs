@@ -295,6 +295,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn mha_empty_sequence_accepts_multiple_heads() {
+        assert!(mha(&[], &[], &[], 0, 4, 2).is_empty());
+    }
+
+    #[test]
     fn attention_noncausal_ignores_offset() {
         let q = [0.0];
         let k = [0.0; 2];
