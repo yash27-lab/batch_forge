@@ -295,6 +295,12 @@ mod tests {
     use super::*;
 
     #[test]
+    #[should_panic(expected = "rope head dim must be even")]
+    fn rope_rejects_odd_head_width() {
+        rope_inplace(&mut [0.0; 3], &[0], 1, 3, 10000.0);
+    }
+
+    #[test]
     fn rmsnorm_applies_per_feature_gamma() {
         approx(
             &rmsnorm(&[2.0, -2.0], &[3.0, 4.0], 1, 2, 0.0),
