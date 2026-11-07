@@ -295,6 +295,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn attention_noncausal_ignores_offset() {
+        let q = [0.0];
+        let k = [0.0; 2];
+        let v = [2.0, 6.0];
+        assert_eq!(
+            attention(&q, &k, &v, 1, 2, 1, false, 0),
+            attention(&q, &k, &v, 1, 2, 1, false, usize::MAX)
+        );
+    }
+
+    #[test]
     fn attention_offset_applies_to_each_query() {
         approx(
             &attention(&[0.0, 0.0], &[0.0; 3], &[2.0, 4.0, 6.0], 2, 3, 1, true, 1),
