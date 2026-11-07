@@ -295,6 +295,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn layernorm_constant_rows_return_beta() {
+        assert_eq!(
+            layernorm(
+                &[3.0, 3.0, -8.0, -8.0],
+                &[2.0, 4.0],
+                &[7.0, -1.0],
+                2,
+                2,
+                1e-5
+            ),
+            [7.0, -1.0, 7.0, -1.0]
+        );
+    }
+
+    #[test]
     fn silu_positive_and_negative_values() {
         let x = 1.0f32;
         approx(
