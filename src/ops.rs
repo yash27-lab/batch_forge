@@ -295,6 +295,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn rmsnorm_zero_row_with_epsilon() {
+        assert_eq!(rmsnorm(&[0.0, 0.0], &[1.0, 2.0], 1, 2, 1e-5), [0.0, 0.0]);
+    }
+
+    #[test]
     fn layernorm_normalizes_rows_independently() {
         approx(
             &layernorm(&[1.0, 3.0, 100.0, 102.0], &[1.0; 2], &[0.0; 2], 2, 2, 0.0),
