@@ -295,6 +295,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn silu_positive_and_negative_values() {
+        let x = 1.0f32;
+        approx(
+            &[silu(x), silu(-x), silu(0.0)],
+            &[0.731_058_6, -0.268_941_43, 0.0],
+            1e-6,
+        );
+    }
+
+    #[test]
     fn gelu_inplace_matches_scalar() {
         let input = [-3.0, -1.0, 0.0, 1.0, 3.0];
         let mut actual = input;
