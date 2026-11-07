@@ -295,6 +295,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn matmul_rectangular_row_major() {
+        assert_eq!(
+            matmul(
+                &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+                &[1.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+                2,
+                3,
+                2
+            ),
+            [4.0, 5.0, 10.0, 11.0]
+        );
+    }
+
+    #[test]
     fn matmul_zero_inner_dimension() {
         assert_eq!(matmul(&[], &[], 2, 0, 3), [0.0; 6]);
     }
