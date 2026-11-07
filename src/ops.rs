@@ -295,6 +295,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn softmax_extreme_finite_range() {
+        let mut x = [f32::MIN, f32::MAX];
+        softmax_inplace(&mut x);
+        assert_eq!(x, [0.0, 1.0]);
+    }
+
+    #[test]
     fn softmax_translation_invariance() {
         let mut a = [-1.0, 0.0, 2.0];
         let mut b = [999.0, 1000.0, 1002.0];
