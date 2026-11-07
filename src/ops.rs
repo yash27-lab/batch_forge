@@ -295,6 +295,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn rope_uses_each_rows_absolute_position() {
+        let mut x = [1.0, 0.0, 1.0, 0.0];
+        rope_inplace(&mut x, &[0, 1], 2, 2, 10000.0);
+        approx(&x, &[1.0, 0.0, 1.0f32.cos(), 1.0f32.sin()], 1e-6);
+    }
+
+    #[test]
     #[should_panic(expected = "rope head dim must be even")]
     fn rope_rejects_odd_head_width() {
         rope_inplace(&mut [0.0; 3], &[0], 1, 3, 10000.0);
